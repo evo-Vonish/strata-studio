@@ -11,6 +11,7 @@
     "@strata/element-bundle": "workspace:*",
     "@strata/element-extractor": "workspace:*",
     "@strata/element-picker": "workspace:*",
+    "lucide-react": "^1.25.0",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
