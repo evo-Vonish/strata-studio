@@ -81,6 +81,21 @@ importers:
 
   packages/element-picker: {}
 
+  packages/project-model:
+    dependencies:
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+
+  packages/property-schema:
+    dependencies:
+      '@strata/project-model':
+        specifier: workspace:*
+        version: link:../project-model
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+
 packages:
 
   '@asamuzakjp/css-color@5.1.11':

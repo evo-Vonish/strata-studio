@@ -24,17 +24,20 @@ to become a general backend IDE, a native application toolchain, or a full 3D en
 
 ## Current state
 
-Two implementation checkpoints are present in the repository:
+Three implementation checkpoints are present in the repository:
 
 - **E0 Element Extractor:** a working vertical slice for selecting, capturing, sanitizing,
   reconstructing, and exporting a real DOM element.
 - **Studio shell:** a React/Vite editor prototype with a Stage, element hierarchy, direct property
   editing, history controls, an Inspector, a Blueprint concept view, an Agent concept view, and
   resizable panels.
+- **M1.1 Project Core:** a headless, versioned Project Model with document-owned node trees,
+  reversible operations and transactions, typed values, a composable Property Registry, and the
+  first Box, Text, Button, Image, and Input definitions.
 
-The shell demonstrates interaction and visual direction; it does not yet implement the accepted
-persistent 30% Agent layout or the canonical Project Model. Those are the next architectural
-checkpoint.
+The shell demonstrates interaction and visual direction, but is not connected to the new Project
+Model yet. The persistent 30% Agent layout, schema-generated Inspector, and sandboxed model renderer
+belong to the next integration checkpoint.
 
 ## E0 Element Extractor
 
@@ -65,6 +68,8 @@ The preview runs without scripts or pointer interaction and carries a restrictiv
 | `packages/element-bundle` | Versioned data contract and runtime validation |
 | `packages/element-picker` | Hit testing, overlay bounds, selectors, iframe/shadow traversal |
 | `packages/element-extractor` | DOM sanitization, CSSOM matching, assets, fidelity, preview document |
+| `packages/project-model` | Versioned project schemas, document trees, typed values, operations, transactions, and inversion |
+| `packages/property-schema` | Property, capability, and element registries plus the five initial element definitions |
 
 ### Architecture documents
 
@@ -72,6 +77,7 @@ The preview runs without scripts or pointer interaction and carries a restrictiv
 | --- | --- |
 | [Product and editor architecture](docs/architecture/product-and-editor-architecture.md) | Accepted product position, workspace layout, Blueprint-first program model, Agent contract, and roadmap |
 | [Element Model and Property Schema](docs/architecture/element-model-and-property-schema.md) | Element registry, capabilities, typed values, state scopes, import/export, and first implementation slice |
+| [M1.1 technical specifications](docs/specs/m1-acceptance.md) | Project Model, Property Registry, operation protocol, and milestone acceptance links |
 | [Element extractor upstream research](docs/research/element-extractor-upstreams.md) | Pinned upstream study and E0 extraction decisions |
 
 ### Run locally
