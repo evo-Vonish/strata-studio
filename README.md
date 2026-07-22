@@ -79,6 +79,7 @@ The preview runs without scripts or pointer interaction and carries a restrictiv
 
 | Document | Purpose |
 | --- | --- |
+| [Project memory and handoff](CLAUDE.md) | Durable product context, architectural constraints, current implementation state, and completion workflow for coding agents |
 | [Product and editor architecture](docs/architecture/product-and-editor-architecture.md) | Accepted product position, workspace layout, Blueprint-first program model, Agent contract, and roadmap |
 | [Element Model and Property Schema](docs/architecture/element-model-and-property-schema.md) | Element registry, capabilities, typed values, state scopes, import/export, and first implementation slice |
 | [M1 technical specifications](docs/specs/m1-acceptance.md) | Project Model, Property Registry, DOM Runtime, operation protocol, and milestone gates |
@@ -101,6 +102,13 @@ Run the complete quality gate with:
 ```bash
 pnpm check
 ```
+
+### Development handoff protocol
+
+`CLAUDE.md` is the repository-scoped project memory shared across coding sessions and agents. Every
+completed development slice must update the relevant product/specification document and the current
+state in `CLAUDE.md`, pass `pnpm check` and `git diff --check`, create a coherent commit, and push the
+current branch to `origin`. Deployment remains a separate explicit step.
 
 ### Known v0.1 boundaries
 

@@ -4,6 +4,18 @@ Date: 2026-07-22
 
 Status: accepted product direction; implementation pending unless marked current
 
+## Current implementation checkpoint
+
+The repository has completed the E0 Element Extractor and M1.1 Project Core. The M1.2 rendering and
+property-editing core is also current: the Project Model now drives a deterministic sandboxed DOM
+Runtime, stable Stage selection, the hierarchy, schema-generated Inspector controls, responsive and
+state scopes, persistence, and exact transaction undo/redo.
+
+M1.2 is not yet complete. Its remaining structural authoring slice is an empty-document flow, Add
+Element palette, `InsertNode` transactions, layout-aware before/after/inside placement, hierarchy and
+Stage reordering/reparenting, delete/duplicate commands, and user-facing Problems diagnostics. The
+minimal Blueprint runtime begins only after this structural loop is reliable.
+
 ## Product statement
 
 **Strata Studio is an AI-native visual IDE for interactive web experiences.**
