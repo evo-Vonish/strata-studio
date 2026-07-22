@@ -262,6 +262,9 @@ export const moveNodeOperationSchema = metaSchema
     index: z.number().int().nonnegative().optional(),
   })
   .strict();
+export const setTagOperationSchema = metaSchema
+  .extend({ type: z.literal("SetTag"), nodeId: idSchema, tag: z.string().min(1).optional() })
+  .strict();
 export const setContentOperationSchema = metaSchema
   .extend({ type: z.literal("SetContent"), nodeId: idSchema, value: strataValueSchema.optional() })
   .strict();
@@ -304,6 +307,7 @@ export const operationSchema = z.discriminatedUnion("type", [
   insertNodeOperationSchema,
   removeNodeOperationSchema,
   moveNodeOperationSchema,
+  setTagOperationSchema,
   setContentOperationSchema,
   setAttributeOperationSchema,
   removeAttributeOperationSchema,
@@ -314,6 +318,7 @@ export const operationSchema = z.discriminatedUnion("type", [
 export type InsertNode = z.infer<typeof insertNodeOperationSchema>;
 export type RemoveNode = z.infer<typeof removeNodeOperationSchema>;
 export type MoveNode = z.infer<typeof moveNodeOperationSchema>;
+export type SetTag = z.infer<typeof setTagOperationSchema>;
 export type SetContent = z.infer<typeof setContentOperationSchema>;
 export type SetAttribute = z.infer<typeof setAttributeOperationSchema>;
 export type RemoveAttribute = z.infer<typeof removeAttributeOperationSchema>;
@@ -498,6 +503,23 @@ export function applyOperation(input: StrataProject, raw: ProjectOperation): App
           nodeId: node.id,
           parentId: oldParentId,
           index: oldIndex,
+        }),
+      };
+    }
+    case "SetTag": {
+      const node = nodeFor(document, operation.nodeId);
+      if (node.kind === "text" || node.kind === "slot")
+        throw new Error(`Node kind '${node.kind}' cannot have an HTML tag`);
+      const next = replaceNode(document, {
+        ...node,
+        ...(operation.tag ? { tag: operation.tag } : { tag: undefined }),
+      });
+      return {
+        project: parseProject(updateDocument(project, next)),
+        inverse: inverseMeta(operation, document.id, {
+          type: "SetTag",
+          nodeId: node.id,
+          tag: node.tag,
         }),
       };
     }

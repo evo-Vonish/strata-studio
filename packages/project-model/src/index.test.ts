@@ -184,6 +184,16 @@ describe("project model", () => {
     ).toThrow();
     expect(project.documents.d?.nodes.a?.content).toBeUndefined();
   });
+  it("changes semantic tags through a reversible operation", () => {
+    const changed = applyOperation(project, { type: "SetTag", nodeId: "a", tag: "section" });
+    expect(changed.project.documents.d?.nodes.a?.tag).toBe("section");
+    expect(applyOperation(changed.project, changed.inverse).project).toEqual(project);
+    const withTextNode = structuredClone(project);
+    fixtureNode(withTextNode, "d", "a1").kind = "text";
+    expect(() =>
+      applyOperation(withTextNode, { type: "SetTag", nodeId: "a1", tag: "span" }),
+    ).toThrow(/cannot have/);
+  });
   it("enforces interaction event consistency and restores bindings", () => {
     expect(() =>
       applyOperation(project, {

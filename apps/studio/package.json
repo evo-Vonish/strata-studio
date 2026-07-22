@@ -8,9 +8,12 @@
     "dev": "vite --host 0.0.0.0"
   },
   "dependencies": {
+    "@strata/dom-runtime": "workspace:*",
     "@strata/element-bundle": "workspace:*",
     "@strata/element-extractor": "workspace:*",
     "@strata/element-picker": "workspace:*",
+    "@strata/project-model": "workspace:*",
+    "@strata/property-schema": "workspace:*",
     "lucide-react": "^1.25.0",
     "react": "19.2.8",
     "react-dom": "19.2.8"

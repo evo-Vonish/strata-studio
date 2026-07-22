@@ -38,6 +38,9 @@ importers:
 
   apps/studio:
     dependencies:
+      '@strata/dom-runtime':
+        specifier: workspace:*
+        version: link:../../packages/dom-runtime
       '@strata/element-bundle':
         specifier: workspace:*
         version: link:../../packages/element-bundle
@@ -47,6 +50,12 @@ importers:
       '@strata/element-picker':
         specifier: workspace:*
         version: link:../../packages/element-picker
+      '@strata/project-model':
+        specifier: workspace:*
+        version: link:../../packages/project-model
+      '@strata/property-schema':
+        specifier: workspace:*
+        version: link:../../packages/property-schema
       lucide-react:
         specifier: ^1.25.0
         version: 1.25.0(react@19.2.8)
@@ -63,6 +72,12 @@ importers:
       vite:
         specifier: 8.1.5
         version: 8.1.5(@types/node@24.10.9)
+
+  packages/dom-runtime:
+    dependencies:
+      '@strata/project-model':
+        specifier: workspace:*
+        version: link:../project-model
 
   packages/element-bundle:
     dependencies:

@@ -35,7 +35,8 @@ interface PropertyDefinition {
   id: string;
   label: string;
   group: string;
-  target: "content" | "attribute" | "style" | "aria" | "interaction" | "editor";
+  target: "content" | "tag" | "attribute" | "style" | "aria" | "interaction" | "editor";
+  storageKey?: string;
   valueType: string;
   control: string;
   defaultValue?: StrataValue;
@@ -54,6 +55,10 @@ interface PropertyDefinition {
 
 Properties refer to `StrataValue` from `@strata/project-model`; the schema package must not create a
 second incompatible value model.
+
+`id` is stable editor identity while `storageKey` names the real HTML attribute or CSS declaration.
+For example, both `buttonType` and `inputType` store into the native `type` attribute, and
+`backgroundColor` stores into `background-color`.
 
 ## Controls
 

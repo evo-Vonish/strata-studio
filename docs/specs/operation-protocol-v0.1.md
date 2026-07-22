@@ -58,6 +58,11 @@ inside the node's own subtree. Its inverse stores the exact old parent/root and 
 Indices are defined against the destination list after the node has been detached, eliminating
 same-parent off-by-one ambiguity.
 
+### SetTag
+
+Changes or clears the semantic HTML tag of an element-like node. Text and slot nodes reject this
+operation. Its inverse restores the exact previous tag.
+
 ## Value operations
 
 ### SetContent

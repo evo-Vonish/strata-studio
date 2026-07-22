@@ -1,8 +1,16 @@
 "use client";
 
+import { buildStageDocument } from "@strata/dom-runtime";
 import type { StrataElementBundle } from "@strata/element-bundle";
 import { buildPreviewDocument, extractElement } from "@strata/element-extractor";
-import { getElementAtPoint, getElementBounds } from "@strata/element-picker";
+import { getElementBounds } from "@strata/element-picker";
+import type {
+  ProjectOperation,
+  StrataNode,
+  StrataProject,
+  StrataValue,
+  StyleScope,
+} from "@strata/project-model";
 import {
   Activity,
   Bot,
@@ -22,7 +30,6 @@ import {
   Globe2,
   Hand,
   Image as ImageIcon,
-  Layers3,
   Library,
   type LucideIcon,
   Maximize2,
@@ -52,7 +59,6 @@ import {
 } from "lucide-react";
 import {
   type CSSProperties,
-  type MouseEvent as ReactMouseEvent,
   type ReactNode,
   type PointerEvent as ReactPointerEvent,
   useCallback,
@@ -61,12 +67,20 @@ import {
   useRef,
   useState,
 } from "react";
+import { ModelInspector } from "./model-inspector";
+import {
+  createStudioProject,
+  selectedNode as findSelectedNode,
+  INITIAL_SELECTED_NODE_ID,
+} from "./studio-project";
+import { useProjectStore } from "./use-project-store";
 
 type WorkspaceMode = "stage" | "blueprint" | "agent";
 type ActivityTool = "hierarchy" | "blocks" | "assets" | "search";
 type InspectorTab = "design" | "content" | "interactions" | "bundle";
 type BottomTab = "operations" | "console" | "problems";
 type DeviceMode = "desktop" | "tablet" | "mobile";
+type StyleState = "base" | "hover" | "focus" | "focus-visible" | "active" | "disabled";
 type ResizeTarget = "left" | "right" | "bottom";
 
 interface ElementProperties {
@@ -86,29 +100,6 @@ interface ElementProperties {
   opacity: number;
 }
 
-interface StyleChange {
-  property: string;
-  before: string;
-  after: string;
-}
-
-type HistoryEntry =
-  | {
-      id: number;
-      kind: "style";
-      element: HTMLElement | SVGElement;
-      changes: StyleChange[];
-      label: string;
-    }
-  | {
-      id: number;
-      kind: "text";
-      element: Element;
-      before: string;
-      after: string;
-      label: string;
-    };
-
 interface OperationItem {
   id: number;
   label: string;
@@ -118,15 +109,14 @@ interface OperationItem {
 }
 
 interface LayerNode {
+  id: string;
   label: string;
   detail: string;
-  selector: string;
   depth: number;
   icon: LucideIcon;
-  expanded?: boolean;
+  expanded: boolean;
 }
 
-const WAVE_BAR_IDS = "abcdefghijklmnopqrstuv".split("");
 const DEFAULT_PROPERTIES: ElementProperties = {
   text: "",
   width: 0,
@@ -156,63 +146,6 @@ const DEVICE_HEIGHTS: Record<DeviceMode, number> = {
   mobile: 844,
 };
 
-const LAYER_NODES: LayerNode[] = [
-  {
-    label: "Orbit Atlas",
-    detail: "Page",
-    selector: ".demo-page",
-    depth: 0,
-    icon: Globe2,
-    expanded: true,
-  },
-  {
-    label: "Header",
-    detail: "header",
-    selector: ".demo-header",
-    depth: 1,
-    icon: Box,
-    expanded: true,
-  },
-  { label: "Brand", detail: "a", selector: ".demo-brand", depth: 2, icon: ComponentIcon },
-  { label: "Navigation", detail: "nav", selector: ".demo-nav", depth: 2, icon: Layers3 },
-  { label: "Main", detail: "main", selector: ".demo-main", depth: 1, icon: Box, expanded: true },
-  {
-    label: "Hero copy",
-    detail: "section",
-    selector: ".demo-copy",
-    depth: 2,
-    icon: Type,
-    expanded: true,
-  },
-  { label: "Heading", detail: "h1", selector: ".demo-copy h1", depth: 3, icon: Type },
-  {
-    label: "Actions",
-    detail: "div",
-    selector: ".demo-actions",
-    depth: 3,
-    icon: Layers3,
-    expanded: true,
-  },
-  {
-    label: "Explore signals",
-    detail: "button",
-    selector: ".demo-primary",
-    depth: 4,
-    icon: ComponentIcon,
-  },
-  {
-    label: "Signal card",
-    detail: "article",
-    selector: ".signal-card",
-    depth: 2,
-    icon: ComponentIcon,
-    expanded: true,
-  },
-  { label: "Orbit visual", detail: "div", selector: ".orbit-visual", depth: 3, icon: Activity },
-  { label: "Stats", detail: "footer", selector: ".signal-stats", depth: 3, icon: Layers3 },
-  { label: "Footer", detail: "footer", selector: ".demo-footer", depth: 1, icon: Box },
-];
-
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
@@ -224,6 +157,69 @@ function makeId(): number {
 function numeric(value: string | null | undefined, fallback = 0): number {
   const parsed = Number.parseFloat(value ?? "");
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function cssValue(value: string): StrataValue | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const dimensionMatch = trimmed.match(/^(-?(?:\d+|\d*\.\d+))(px|%|em|rem|vw|vh|vmin|vmax)$/i);
+  if (dimensionMatch?.[1] && dimensionMatch[2]) {
+    return {
+      kind: "dimension",
+      value: Number(dimensionMatch[1]),
+      unit: dimensionMatch[2].toLowerCase(),
+    };
+  }
+  if (/^#[\da-f]{3,8}$/i.test(trimmed)) return { kind: "color", value: trimmed };
+  if (/^-?(?:\d+|\d*\.\d+)$/.test(trimmed)) {
+    return { kind: "literal", value: Number(trimmed) };
+  }
+  return { kind: "raw", cssText: trimmed };
+}
+
+function modelScope(device: DeviceMode, state: StyleState): StyleScope {
+  return {
+    ...(device === "desktop" ? {} : { breakpoint: device }),
+    ...(state === "base" ? {} : { state }),
+  };
+}
+
+function projectionFor(document: Document | null, nodeId: string | null): Element | null {
+  if (!document || !nodeId) return null;
+  return (
+    [...document.querySelectorAll("[data-strata-node-id]")].find(
+      (element) => element.getAttribute("data-strata-node-id") === nodeId,
+    ) ?? null
+  );
+}
+
+function iconForNode(node: StrataNode, depth: number): LucideIcon {
+  if (depth === 0) return Globe2;
+  if (node.type === "Text") return Type;
+  if (node.type === "Image") return ImageIcon;
+  if (node.type === "Button" || node.type === "Input") return ComponentIcon;
+  return Box;
+}
+
+function projectLayers(project: StrataProject): LayerNode[] {
+  const document = project.documents[project.activeDocumentId];
+  if (!document) return [];
+  const layers: LayerNode[] = [];
+  const visit = (nodeId: string, depth: number) => {
+    const current = document.nodes[nodeId];
+    if (!current) return;
+    layers.push({
+      id: current.id,
+      label: current.editor.name ?? current.type,
+      detail: current.tag ?? current.kind,
+      depth,
+      icon: iconForNode(current, depth),
+      expanded: current.children.length > 0,
+    });
+    for (const childId of current.children) visit(childId, depth + 1);
+  };
+  for (const rootId of document.rootNodeIds) visit(rootId, 0);
+  return layers;
 }
 
 function colorToHex(value: string): string {
@@ -247,17 +243,6 @@ function getEditableTextNode(element: Element): Text | null {
 
 function getElementText(element: Element): string {
   return getEditableTextNode(element)?.textContent?.trim() ?? "";
-}
-
-function setElementText(element: Element, value: string): void {
-  const node = getEditableTextNode(element);
-  if (node) {
-    const leading = node.textContent?.match(/^\s*/)?.[0] ?? "";
-    const trailing = node.textContent?.match(/\s*$/)?.[0] ?? "";
-    node.textContent = `${leading}${value}${trailing || " "}`;
-    return;
-  }
-  element.textContent = value;
 }
 
 function elementLabel(element: Element | null): string {
@@ -297,10 +282,6 @@ function readElementProperties(element: Element): ElementProperties {
     borderStyle: style.borderTopStyle || "none",
     opacity: Math.round(numeric(style.opacity, 1) * 100),
   };
-}
-
-function canStyle(element: Element | null): element is HTMLElement | SVGElement {
-  return Boolean(element && (element instanceof HTMLElement || element instanceof SVGElement));
 }
 
 function timeLabel(): string {
@@ -398,122 +379,16 @@ function PanelSection({
   );
 }
 
-function DemoPage() {
-  return (
-    <div className="demo-page">
-      <header className="demo-header">
-        <a className="demo-brand" href="#atlas" aria-label="Orbit Atlas home">
-          <span className="demo-brand-mark">OA</span>
-          <span>Orbit Atlas</span>
-        </a>
-        <nav className="demo-nav" aria-label="Demo navigation">
-          <a href="#missions">Missions</a>
-          <a href="#signals">Signals</a>
-          <button type="button">Open map</button>
-        </nav>
-      </header>
-
-      <main className="demo-main">
-        <section className="demo-copy">
-          <p className="demo-kicker">
-            <span /> Live constellation index
-          </p>
-          <h1>Chart the quiet signals between worlds.</h1>
-          <p className="demo-lede">
-            A living field guide to deep-space missions, faint transmissions, and the people tracing
-            their way home.
-          </p>
-          <div className="demo-actions">
-            <button className="demo-primary" type="button">
-              Explore signals <span>↗</span>
-            </button>
-            <button className="demo-secondary" type="button">
-              View field notes
-            </button>
-          </div>
-          <div className="demo-proof">
-            <div className="demo-avatars" role="img" aria-label="Three contributors">
-              <span>AK</span>
-              <span>LN</span>
-              <span>Q</span>
-            </div>
-            <p>
-              <strong>48 observers</strong>
-              <br />
-              mapping the night right now
-            </p>
-          </div>
-        </section>
-
-        <article className="signal-card">
-          <div className="signal-card-head">
-            <div>
-              <span className="signal-index">Signal 04 / 12</span>
-              <h2>Kepler Echo</h2>
-            </div>
-            <span className="signal-live">
-              <i /> Receiving
-            </span>
-          </div>
-
-          <div className="orbit-visual" aria-hidden="true">
-            <div className="orbit orbit-one">
-              <span />
-            </div>
-            <div className="orbit orbit-two">
-              <span />
-            </div>
-            <div className="orbit orbit-three">
-              <span />
-            </div>
-            <div className="orbit-core">
-              <span>452b</span>
-            </div>
-            <span className="coordinate coordinate-a">19h 44m</span>
-            <span className="coordinate coordinate-b">+44° 16′</span>
-          </div>
-
-          <div className="signal-wave" aria-hidden="true">
-            {WAVE_BAR_IDS.map((id) => (
-              <i key={id} style={{ "--wave": (id.charCodeAt(0) % 7) + 2 } as CSSProperties} />
-            ))}
-          </div>
-
-          <footer className="signal-stats">
-            <div>
-              <span>Distance</span>
-              <strong>1,243 ly</strong>
-            </div>
-            <div>
-              <span>Clarity</span>
-              <strong>87.4%</strong>
-            </div>
-            <div>
-              <span>Last pulse</span>
-              <strong>12 sec</strong>
-            </div>
-          </footer>
-        </article>
-      </main>
-
-      <footer className="demo-footer">
-        <span>Field log 2026—07</span>
-        <span className="demo-scroll">
-          Scroll to navigate <i>↓</i>
-        </span>
-      </footer>
-    </div>
-  );
-}
-
 function NavigatorPanel({
   tool,
-  selected,
+  project,
+  selectedNodeId,
   onSelect,
 }: {
   tool: ActivityTool;
-  selected: Element | null;
-  onSelect: (selector: string) => void;
+  project: StrataProject;
+  selectedNodeId: string | null;
+  onSelect: (nodeId: string) => void;
 }) {
   const title = {
     hierarchy: "Hierarchy",
@@ -521,6 +396,8 @@ function NavigatorPanel({
     assets: "Assets",
     search: "Search",
   }[tool];
+  const layers = useMemo(() => projectLayers(project), [project]);
+  const document = project.documents[project.activeDocumentId];
 
   return (
     <aside className="navigator-panel" data-studio-ui>
@@ -539,22 +416,24 @@ function NavigatorPanel({
             <input aria-label="Filter hierarchy" placeholder="Filter scene…" />
           </div>
           <div className="panel-subheading">
-            <span>Orbit Atlas / index</span>
-            <small>13</small>
+            <span>
+              {project.name ?? "Strata Project"} / {document?.name ?? "Document"}
+            </span>
+            <small>{layers.length}</small>
           </div>
           <div className="layer-tree" role="tree" aria-label="Page hierarchy">
-            {LAYER_NODES.map((node) => {
-              const active = Boolean(selected?.matches(node.selector));
+            {layers.map((node) => {
+              const active = selectedNodeId === node.id;
               const Icon = node.icon;
               return (
                 <button
-                  key={node.selector}
+                  key={node.id}
                   className={`layer-row${active ? " active" : ""}`}
                   type="button"
                   role="treeitem"
                   aria-selected={active}
                   style={{ "--depth": node.depth } as CSSProperties}
-                  onClick={() => onSelect(node.selector)}
+                  onClick={() => onSelect(node.id)}
                 >
                   <span className="layer-expander">
                     {node.expanded ? (
@@ -573,8 +452,8 @@ function NavigatorPanel({
           <div className="navigator-footer-card">
             <span className="tiny-status" />
             <div>
-              <strong>DOM synchronized</strong>
-              <small>13 nodes · live stage</small>
+              <strong>Model synchronized</strong>
+              <small>{layers.length} nodes · compiled stage</small>
             </div>
           </div>
         </>
@@ -810,22 +689,22 @@ function AgentWorkspace({ onApply }: { onApply: () => void }) {
         <div className="plan-target">
           <ComponentIcon size={15} />
           <div>
-            <strong>ExploreButton</strong>
-            <code>node_hero_primary</code>
+            <strong>Primary action</strong>
+            <code>primary-action</code>
           </div>
           <Check size={14} />
         </div>
         <div className="operation-preview">
           <span>SetStyle</span>
-          <code>width → 156px</code>
+          <code>width → 208px</code>
         </div>
         <div className="operation-preview">
           <span>SetStyle</span>
-          <code>font-weight → 600</code>
+          <code>font-weight → 760</code>
         </div>
         <div className="operation-preview">
           <span>SetStateStyle</span>
-          <code>:hover translateY → -2px</code>
+          <code>:hover translateY → -3px</code>
         </div>
         <div className="agent-plan-footer">
           <button type="button">Reject</button>
@@ -840,17 +719,29 @@ function AgentWorkspace({ onApply }: { onApply: () => void }) {
 
 export function App() {
   const stageRef = useRef<HTMLDivElement>(null);
+  const runtimeFrameRef = useRef<HTMLIFrameElement>(null);
+  const runtimeCleanupRef = useRef<(() => void) | null>(null);
+  const selectModeRef = useRef(true);
   const paletteInputRef = useRef<HTMLInputElement>(null);
-  const historyRef = useRef<HistoryEntry[]>([]);
-  const historyCursorRef = useRef(0);
+  const {
+    project,
+    applyOperations,
+    undo: undoProject,
+    redo: redoProject,
+    canUndo,
+    canRedo,
+  } = useProjectStore(createStudioProject);
 
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("stage");
   const [activeTool, setActiveTool] = useState<ActivityTool>("hierarchy");
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("design");
   const [bottomTab, setBottomTab] = useState<BottomTab>("operations");
   const [device, setDevice] = useState<DeviceMode>("desktop");
+  const [styleState, setStyleState] = useState<StyleState>("base");
+  const [schemaInspector, setSchemaInspector] = useState(true);
   const [zoom, setZoom] = useState(74);
   const [selectMode, setSelectMode] = useState(true);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(INITIAL_SELECTED_NODE_ID);
   const [hovered, setHovered] = useState<Element | null>(null);
   const [selected, setSelected] = useState<Element | null>(null);
   const [bundle, setBundle] = useState<StrataElementBundle | null>(null);
@@ -866,17 +757,38 @@ export function App() {
   const [bottomOpen, setBottomOpen] = useState(true);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
-  const [historyCursor, setHistoryCursor] = useState(0);
-  const [historyLength, setHistoryLength] = useState(0);
+  const viewportSignature = `${device}:${zoom}`;
   const [operations, setOperations] = useState<OperationItem[]>([
     {
       id: 0,
-      label: "Stage renderer connected",
-      value: "DOM and Blueprint bridge ready",
+      label: "Project runtime connected",
+      value: "Project Model → DOM Runtime → Stage",
       time: "--:--:--",
       tone: "system",
     },
   ]);
+  const modelNode = findSelectedNode(project, selectedNodeId);
+  const stageDocument = useMemo(
+    () =>
+      buildStageDocument(
+        project,
+        project.activeDocumentId,
+        project.name ? { title: project.name } : {},
+      ),
+    [project],
+  );
+  const selectionPath = useMemo(() => {
+    const document = project.documents[project.activeDocumentId];
+    const path: StrataNode[] = [];
+    let current: StrataNode | null | undefined = modelNode;
+    while (current && path.length <= Object.keys(document?.nodes ?? {}).length) {
+      path.unshift(current);
+      current = current.parentId && document ? document.nodes[current.parentId] : undefined;
+    }
+    return path;
+  }, [modelNode, project]);
+
+  selectModeRef.current = selectMode;
 
   const syncProperties = useCallback((element: Element | null) => {
     if (element) setProperties(readElementProperties(element));
@@ -892,27 +804,20 @@ export function App() {
     [],
   );
 
-  const pushHistory = useCallback((entry: HistoryEntry) => {
-    const next = historyRef.current.slice(0, historyCursorRef.current);
-    next.push(entry);
-    historyRef.current = next;
-    historyCursorRef.current = next.length;
-    setHistoryCursor(next.length);
-    setHistoryLength(next.length);
-  }, []);
-
   const captureElement = useCallback(
     (element: Element, options: { quiet?: boolean } = {}) => {
+      setSelected(element);
+      setSelectedNodeId(element.getAttribute("data-strata-node-id"));
+      setHovered(null);
+      syncProperties(element);
+      setRevision((value) => value + 1);
       try {
         const nextBundle = extractElement(element);
-        setSelected(element);
-        setHovered(null);
         setBundle(nextBundle);
         setError(null);
-        syncProperties(element);
-        setRevision((value) => value + 1);
         if (!options.quiet) addOperation("SelectNode", elementLabel(element));
       } catch (caught) {
+        setBundle(null);
         setError(caught instanceof Error ? caught.message : "The element could not be selected");
       }
     },
@@ -920,20 +825,54 @@ export function App() {
   );
 
   useEffect(() => {
-    const frame = window.requestAnimationFrame(() => {
-      const initial = stageRef.current?.querySelector(".demo-primary");
-      if (initial) captureElement(initial, { quiet: true });
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [captureElement]);
+    if (modelNode) return;
+    const document = project.documents[project.activeDocumentId];
+    setSelectedNodeId(document?.rootNodeIds[0] ?? null);
+  }, [modelNode, project]);
 
-  const findElement = useCallback((clientX: number, clientY: number): Element | null => {
-    const stage = stageRef.current;
-    if (!stage) return null;
-    const demoPage = stage.querySelector(".demo-page");
-    if (!demoPage) return null;
-    return getElementAtPoint(clientX, clientY, { container: demoPage });
-  }, []);
+  const connectRuntimeFrame = useCallback(() => {
+    runtimeCleanupRef.current?.();
+    const document = runtimeFrameRef.current?.contentDocument;
+    if (!document) return;
+    const root = document.documentElement;
+    root.style.cursor = selectModeRef.current ? "default" : "grab";
+
+    const targetFor = (event: Event): Element | null => {
+      const target = event.target as Element | null;
+      return target?.closest?.("[data-strata-node-id]") ?? null;
+    };
+    const onPointerMove = (event: PointerEvent) => {
+      if (!selectModeRef.current) return;
+      setHovered(targetFor(event));
+    };
+    const onPointerLeave = () => setHovered(null);
+    const onClick = (event: MouseEvent) => {
+      event.preventDefault();
+      if (!selectModeRef.current) return;
+      const target = targetFor(event);
+      if (!target) return;
+      event.stopPropagation();
+      captureElement(target);
+    };
+    document.addEventListener("pointermove", onPointerMove);
+    document.addEventListener("pointerleave", onPointerLeave);
+    document.addEventListener("click", onClick, true);
+    runtimeCleanupRef.current = () => {
+      document.removeEventListener("pointermove", onPointerMove);
+      document.removeEventListener("pointerleave", onPointerLeave);
+      document.removeEventListener("click", onClick, true);
+    };
+
+    const current = projectionFor(document, selectedNodeId);
+    if (current) captureElement(current, { quiet: true });
+  }, [captureElement, selectedNodeId]);
+
+  useEffect(() => () => runtimeCleanupRef.current?.(), []);
+
+  useEffect(() => {
+    const root = runtimeFrameRef.current?.contentDocument?.documentElement;
+    if (root) root.style.cursor = selectMode ? "default" : "grab";
+  }, [selectMode]);
 
   const syncOverlay = useCallback(() => {
     const target = selectMode && hovered ? hovered : selected;
@@ -949,8 +888,9 @@ export function App() {
       width: bounds.width,
       height: bounds.height,
       "--overlay-revision": revision,
+      "--overlay-viewport": viewportSignature,
     } as CSSProperties);
-  }, [hovered, revision, selectMode, selected, workspaceMode]);
+  }, [hovered, revision, selectMode, selected, viewportSignature, workspaceMode]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(syncOverlay);
@@ -964,111 +904,85 @@ export function App() {
   }, [syncOverlay]);
 
   useEffect(() => {
+    const frameElement = runtimeFrameRef.current;
+    if (frameElement) frameElement.dataset.device = device;
+    const frame = window.requestAnimationFrame(() => {
+      if (selected?.isConnected) syncProperties(selected);
+      setRevision((value) => value + 1);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [device, selected, syncProperties]);
+
+  useEffect(() => {
     if (!paletteOpen) return;
     const frame = window.requestAnimationFrame(() => paletteInputRef.current?.focus());
     return () => window.cancelAnimationFrame(frame);
   }, [paletteOpen]);
 
+  const applyModelOperations = useCallback(
+    (nextOperations: ProjectOperation[], label: string, tone: OperationItem["tone"] = "edit") => {
+      if (nextOperations.length === 0) return;
+      applyOperations(nextOperations, label);
+      addOperation(
+        nextOperations.length === 1 ? (nextOperations[0]?.type ?? "Operation") : "Transaction",
+        `${label} · ${nextOperations.length} operation${nextOperations.length === 1 ? "" : "s"}`,
+        tone,
+      );
+    },
+    [addOperation, applyOperations],
+  );
+
   const undo = useCallback(() => {
-    if (historyCursorRef.current <= 0) return;
-    const entry = historyRef.current[historyCursorRef.current - 1];
-    if (!entry) return;
-    if (entry.kind === "style") {
-      for (const change of entry.changes) {
-        if (change.before) entry.element.style.setProperty(change.property, change.before);
-        else entry.element.style.removeProperty(change.property);
-      }
-    } else {
-      setElementText(entry.element, entry.before);
-    }
-    historyCursorRef.current -= 1;
-    setHistoryCursor(historyCursorRef.current);
-    syncProperties(selected);
-    setRevision((value) => value + 1);
-    addOperation("Undo", entry.label, "system");
-  }, [addOperation, selected, syncProperties]);
+    const label = undoProject();
+    if (label) addOperation("Undo", label, "system");
+  }, [addOperation, undoProject]);
 
   const redo = useCallback(() => {
-    if (historyCursorRef.current >= historyRef.current.length) return;
-    const entry = historyRef.current[historyCursorRef.current];
-    if (!entry) return;
-    if (entry.kind === "style") {
-      for (const change of entry.changes) {
-        if (change.after) entry.element.style.setProperty(change.property, change.after);
-        else entry.element.style.removeProperty(change.property);
-      }
-    } else {
-      setElementText(entry.element, entry.after);
-    }
-    historyCursorRef.current += 1;
-    setHistoryCursor(historyCursorRef.current);
-    syncProperties(selected);
-    setRevision((value) => value + 1);
-    addOperation("Redo", entry.label, "system");
-  }, [addOperation, selected, syncProperties]);
+    const label = redoProject();
+    if (label) addOperation("Redo", label, "system");
+  }, [addOperation, redoProject]);
 
   const commitStyles = useCallback(
     (styles: Array<[string, string]>, label: string) => {
-      if (!canStyle(selected)) return;
-      const changes = styles.map(([property, after]) => ({
-        property,
-        before: selected.style.getPropertyValue(property),
-        after,
-      }));
-      for (const change of changes) {
-        if (change.after) selected.style.setProperty(change.property, change.after);
-        else selected.style.removeProperty(change.property);
-      }
-      pushHistory({ id: makeId(), kind: "style", element: selected, changes, label });
-      addOperation(
-        "SetStyle",
-        `${label} · ${styles.map(([key, value]) => `${key}: ${value}`).join(", ")}`,
-      );
-      syncProperties(selected);
-      setRevision((value) => value + 1);
+      if (!selectedNodeId) return;
+      const scope = modelScope(device, styleState);
+      const nextOperations = styles.map(([name, serialized]): ProjectOperation => {
+        const value = cssValue(serialized);
+        const base: ProjectOperation = {
+          type: "SetStyle",
+          source: "inspector",
+          documentId: project.activeDocumentId,
+          nodeId: selectedNodeId,
+          scope,
+          name,
+        };
+        return value ? { ...base, value } : base;
+      });
+      applyModelOperations(nextOperations, label);
     },
-    [addOperation, pushHistory, selected, syncProperties],
+    [applyModelOperations, device, project.activeDocumentId, selectedNodeId, styleState],
   );
 
   const commitText = useCallback(
     (value: string) => {
-      if (!selected) return;
-      const before = getElementText(selected);
-      if (before === value.trim()) return;
-      setElementText(selected, value.trim());
-      pushHistory({
-        id: makeId(),
-        kind: "text",
-        element: selected,
-        before,
-        after: value.trim(),
-        label: "Text content",
-      });
-      addOperation("SetText", `“${value.trim()}”`);
-      syncProperties(selected);
-      setRevision((current) => current + 1);
+      if (!selectedNodeId) return;
+      const content = value.trim();
+      const operation: ProjectOperation = {
+        type: "SetContent",
+        source: "inspector",
+        documentId: project.activeDocumentId,
+        nodeId: selectedNodeId,
+        value: { kind: "literal", value: content },
+      };
+      applyModelOperations([operation], "Text content");
     },
-    [addOperation, pushHistory, selected, syncProperties],
+    [applyModelOperations, project.activeDocumentId, selectedNodeId],
   );
 
-  const onStagePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!selectMode) return;
-    setHovered(findElement(event.clientX, event.clientY));
-  };
-
-  const onStageClick = (event: ReactMouseEvent<HTMLDivElement>) => {
-    if (!selectMode) return;
-    const candidate = findElement(event.clientX, event.clientY);
-    if (!candidate) return;
-    event.preventDefault();
-    event.stopPropagation();
-    captureElement(candidate);
-  };
-
-  const selectFromTree = (selector: string) => {
-    const element = stageRef.current?.querySelector(selector);
-    if (!element) return;
-    captureElement(element);
+  const selectFromTree = (nodeId: string) => {
+    setSelectedNodeId(nodeId);
+    const element = projectionFor(runtimeFrameRef.current?.contentDocument ?? null, nodeId);
+    if (element) captureElement(element);
     setWorkspaceMode("stage");
   };
 
@@ -1145,8 +1059,6 @@ export function App() {
   const previewDocument = useMemo(() => (bundle ? buildPreviewDocument(bundle) : ""), [bundle]);
   const overlayTarget = selectMode && hovered ? hovered : selected;
   const overlayIsHover = Boolean(selectMode && hovered && hovered !== selected);
-  const canUndo = historyCursor > 0;
-  const canRedo = historyCursor < historyLength;
 
   const downloadBundle = () => {
     if (!bundle) return;
@@ -1160,25 +1072,47 @@ export function App() {
   };
 
   const applyAgentPlan = () => {
-    const target = stageRef.current?.querySelector(".demo-primary");
-    if (!target) return;
-    captureElement(target, { quiet: true });
-    window.requestAnimationFrame(() => {
-      if (canStyle(target)) {
-        const changes: StyleChange[] = (
-          [
-            ["width", target.style.getPropertyValue("width"), "156px"],
-            ["font-weight", target.style.getPropertyValue("font-weight"), "600"],
-          ] as const
-        ).map(([property, before, after]) => ({ property, before, after }));
-        for (const change of changes) target.style.setProperty(change.property, change.after);
-        pushHistory({ id: makeId(), kind: "style", element: target, changes, label: "Agent plan" });
-        addOperation("Agent applied", "2 base styles + 1 hover state queued", "agent");
-        syncProperties(target);
-        setRevision((value) => value + 1);
-        setWorkspaceMode("stage");
-      }
-    });
+    const documentId = project.activeDocumentId;
+    if (!project.documents[documentId]?.nodes[INITIAL_SELECTED_NODE_ID]) {
+      addOperation(
+        "Agent plan blocked",
+        `Target ${INITIAL_SELECTED_NODE_ID} is not present in the active document`,
+        "system",
+      );
+      return;
+    }
+    const operations: ProjectOperation[] = [
+      {
+        type: "SetStyle",
+        source: "agent",
+        documentId,
+        nodeId: INITIAL_SELECTED_NODE_ID,
+        scope: {},
+        name: "width",
+        value: { kind: "dimension", value: 208, unit: "px" },
+      },
+      {
+        type: "SetStyle",
+        source: "agent",
+        documentId,
+        nodeId: INITIAL_SELECTED_NODE_ID,
+        scope: {},
+        name: "font-weight",
+        value: { kind: "literal", value: 760 },
+      },
+      {
+        type: "SetStyle",
+        source: "agent",
+        documentId,
+        nodeId: INITIAL_SELECTED_NODE_ID,
+        scope: { state: "hover" },
+        name: "transform",
+        value: { kind: "literal", value: "translateY(-3px)" },
+      },
+    ];
+    setSelectedNodeId(INITIAL_SELECTED_NODE_ID);
+    applyModelOperations(operations, "Agent plan · Primary action", "agent");
+    setWorkspaceMode("stage");
   };
 
   const paletteCommands = [
@@ -1255,9 +1189,9 @@ export function App() {
             <button type="button">Help</button>
           </nav>
           <div className="project-breadcrumb">
-            <span>Orbit Atlas</span>
+            <span>{project.name ?? "Strata Project"}</span>
             <ChevronRight size={11} />
-            <em>index.strata</em>
+            <em>home.strata</em>
           </div>
         </div>
 
@@ -1360,7 +1294,12 @@ export function App() {
           </div>
         </nav>
 
-        <NavigatorPanel tool={activeTool} selected={selected} onSelect={selectFromTree} />
+        <NavigatorPanel
+          tool={activeTool}
+          project={project}
+          selectedNodeId={selectedNodeId}
+          onSelect={selectFromTree}
+        />
         <div
           className="panel-resizer vertical left-resizer"
           onPointerDown={(event) => startResize("left", event)}
@@ -1374,7 +1313,7 @@ export function App() {
                 {workspaceMode === "stage"
                   ? "index.html"
                   : workspaceMode === "blueprint"
-                    ? "ExploreButton.blueprint"
+                    ? "PrimaryAction.blueprint"
                     : "Agent Session"}
               </span>
               <i />
@@ -1491,9 +1430,7 @@ export function App() {
                   ref={stageRef}
                   className={`strata-stage ${selectMode ? "is-selecting" : "is-panning"}`}
                   style={stageStyle}
-                  onPointerMove={onStagePointerMove}
                   onPointerLeave={() => setHovered(null)}
-                  onClickCapture={onStageClick}
                 >
                   <div className="stage-grid" />
                   <div className="stage-rulers">
@@ -1510,11 +1447,18 @@ export function App() {
                           <i />
                         </div>
                         <span>
-                          <Globe2 size={10} /> orbit-atlas.local
+                          <Globe2 size={10} /> strata-model.local
                         </span>
-                        <em>Live DOM</em>
+                        <em>Model Runtime</em>
                       </div>
-                      <DemoPage />
+                      <iframe
+                        ref={runtimeFrameRef}
+                        className="model-stage-frame"
+                        title={`${project.name ?? "Strata Project"} stage`}
+                        sandbox="allow-same-origin"
+                        srcDoc={stageDocument}
+                        onLoad={connectRuntimeFrame}
+                      />
                     </div>
                     <div className="viewport-caption">
                       <span>
@@ -1592,10 +1536,10 @@ export function App() {
             {bottomTab === "console" && (
               <div className="console-view">
                 <p>
-                  <span>strata</span> Stage renderer connected
+                  <span>strata</span> Project Store connected
                 </p>
                 <p>
-                  <span>bridge</span> DOM ↔ Blueprint node map ready
+                  <span>runtime</span> Project Model → isolated DOM projection ready
                 </p>
                 <p>
                   <span>extractor</span>{" "}
@@ -1613,7 +1557,7 @@ export function App() {
               <div className="problems-empty">
                 <Check size={20} />
                 <strong>No problems detected</strong>
-                <span>Blueprint schema, DOM bridge and stage render are valid.</span>
+                <span>Property schema, operations and stage render are valid.</span>
               </div>
             )}
           </section>
@@ -1642,12 +1586,8 @@ export function App() {
               <ComponentIcon size={17} />
             </span>
             <div>
-              <strong>
-                {selected
-                  ? getElementText(selected) || selected.tagName.toLowerCase()
-                  : "No selection"}
-              </strong>
-              <code>{elementLabel(selected)}</code>
+              <strong>{modelNode?.editor.name ?? "No model selection"}</strong>
+              <code>{modelNode ? `${modelNode.type} · ${modelNode.id}` : "—"}</code>
             </div>
             <button
               type="button"
@@ -1661,11 +1601,16 @@ export function App() {
             </button>
           </div>
           <div className="selection-path">
-            <span>Page</span>
+            <span>
+              {selectionPath
+                .slice(0, -1)
+                .map((node) => node.editor.name ?? node.type)
+                .join(" / ") ||
+                project.documents[project.activeDocumentId]?.name ||
+                "Document"}
+            </span>
             <ChevronRight size={10} />
-            <span>Hero</span>
-            <ChevronRight size={10} />
-            <strong>{selected?.tagName.toLowerCase() ?? "—"}</strong>
+            <strong>{modelNode?.editor.name ?? "—"}</strong>
           </div>
           <div className="inspector-tabbar" role="tablist">
             <button
@@ -1698,8 +1643,48 @@ export function App() {
             </button>
           </div>
 
+          <fieldset
+            className={`inspector-source-switch${
+              inspectorTab === "design" || inspectorTab === "content" ? "" : " is-status"
+            }`}
+            aria-label="Inspector source"
+          >
+            {inspectorTab === "design" || inspectorTab === "content" ? (
+              <>
+                <button
+                  className={schemaInspector ? "active" : ""}
+                  type="button"
+                  onClick={() => setSchemaInspector(true)}
+                >
+                  Schema
+                </button>
+                <button
+                  className={!schemaInspector ? "active" : ""}
+                  type="button"
+                  onClick={() => setSchemaInspector(false)}
+                >
+                  Quick
+                </button>
+              </>
+            ) : null}
+            <span>{inspectorTab === "bundle" ? "Runtime Projection" : "Project Model"}</span>
+          </fieldset>
+
           <div className="inspector-scroll">
-            {inspectorTab === "design" && (
+            {(inspectorTab === "design" || inspectorTab === "content") && schemaInspector && (
+              <ModelInspector
+                mode={inspectorTab}
+                node={modelNode}
+                assets={project.assets}
+                documentId={project.activeDocumentId}
+                device={device}
+                styleState={styleState}
+                onStyleStateChange={setStyleState}
+                onApply={applyModelOperations}
+              />
+            )}
+
+            {inspectorTab === "design" && !schemaInspector && (
               <>
                 <div className="style-scope">
                   <button className="active" type="button">
@@ -1937,7 +1922,7 @@ export function App() {
               </>
             )}
 
-            {inspectorTab === "content" && (
+            {inspectorTab === "content" && !schemaInspector && (
               <>
                 <PanelSection title="Content">
                   <label className="textarea-property">
@@ -2118,13 +2103,13 @@ export function App() {
           </span>
         </div>
         <div>
-          <span>Stage: React DOM</span>
-          <span>{selected ? elementLabel(selected) : "No selection"}</span>
+          <span>Stage: Project Model</span>
+          <span>{modelNode?.editor.name ?? "No selection"}</span>
           <span>
             <Activity size={11} /> 60 FPS
           </span>
           <span className="status-ready">
-            <i /> Blueprint bridge ready
+            <i /> Canonical operations ready
           </span>
         </div>
       </footer>

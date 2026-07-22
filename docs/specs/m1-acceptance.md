@@ -7,6 +7,7 @@ Related specifications:
 - [Project Model v0.1](project-model-v0.1.md)
 - [Property Registry v0.1](property-registry-v0.1.md)
 - [Operation Protocol v0.1](operation-protocol-v0.1.md)
+- [DOM Runtime v0.1](dom-runtime-v0.1.md)
 
 ## Milestone outcome
 
@@ -29,6 +30,11 @@ M1.1 is complete when:
 - the complete repository quality gate passes.
 
 ## M1.2 Stage and Property Engine gate
+
+Status: active. The model-backed renderer, stable selection, schema Inspector, scoped property
+editing, local persistence, Agent transaction example, and exact undo/redo are implemented. Empty
+document creation, element insertion UI, reordering gestures, and user-facing operation diagnostics
+remain before this gate is complete.
 
 - create an empty page and insert the five initial elements;
 - select through a stable Strata node ID;

@@ -24,7 +24,7 @@ to become a general backend IDE, a native application toolchain, or a full 3D en
 
 ## Current state
 
-Three implementation checkpoints are present in the repository:
+Four implementation checkpoints are present in the repository:
 
 - **E0 Element Extractor:** a working vertical slice for selecting, capturing, sanitizing,
   reconstructing, and exporting a real DOM element.
@@ -34,10 +34,13 @@ Three implementation checkpoints are present in the repository:
 - **M1.1 Project Core:** a headless, versioned Project Model with document-owned node trees,
   reversible operations and transactions, typed values, a composable Property Registry, and the
   first Box, Text, Button, Image, and Input definitions.
+- **M1.2 model-backed Stage core:** a deterministic, sandboxed DOM Runtime; a persistent Project
+  Store with undo/redo; a model-derived hierarchy; and schema-generated Design/Content controls
+  wired to the same operation protocol used by the Agent prototype.
 
-The shell demonstrates interaction and visual direction, but is not connected to the new Project
-Model yet. The persistent 30% Agent layout, schema-generated Inspector, and sandboxed model renderer
-belong to the next integration checkpoint.
+The Stage is now a projection of the Project Model rather than an independently mutable React DOM
+tree. The remaining M1.2 work is authoring structure itself: an Add Element palette, insertion and
+reordering gestures, empty-page creation, and stronger diagnostics for invalid operations.
 
 ## E0 Element Extractor
 
@@ -70,6 +73,7 @@ The preview runs without scripts or pointer interaction and carries a restrictiv
 | `packages/element-extractor` | DOM sanitization, CSSOM matching, assets, fidelity, preview document |
 | `packages/project-model` | Versioned project schemas, document trees, typed values, operations, transactions, and inversion |
 | `packages/property-schema` | Property, capability, and element registries plus the five initial element definitions |
+| `packages/dom-runtime` | Deterministic Project Model to HTML/CSS compilation and sandboxed Stage documents |
 
 ### Architecture documents
 
@@ -77,7 +81,8 @@ The preview runs without scripts or pointer interaction and carries a restrictiv
 | --- | --- |
 | [Product and editor architecture](docs/architecture/product-and-editor-architecture.md) | Accepted product position, workspace layout, Blueprint-first program model, Agent contract, and roadmap |
 | [Element Model and Property Schema](docs/architecture/element-model-and-property-schema.md) | Element registry, capabilities, typed values, state scopes, import/export, and first implementation slice |
-| [M1.1 technical specifications](docs/specs/m1-acceptance.md) | Project Model, Property Registry, operation protocol, and milestone acceptance links |
+| [M1 technical specifications](docs/specs/m1-acceptance.md) | Project Model, Property Registry, DOM Runtime, operation protocol, and milestone gates |
+| [DOM Runtime v0.1](docs/specs/dom-runtime-v0.1.md) | Deterministic rendering, stable node identity, scope mapping, and preview security boundary |
 | [Element extractor upstream research](docs/research/element-extractor-upstreams.md) | Pinned upstream study and E0 extraction decisions |
 
 ### Run locally
@@ -108,14 +113,13 @@ No upstream repository is vendored into this repository. Research clones live ou
 
 ## Next vertical slice
 
-The next slice should prove one complete path instead of expanding every panel at once:
+The next slice completes structural Stage authoring before Blueprint execution:
 
-1. insert a Button and Text node on the Stage;
-2. edit typed content and visual properties through schema-generated controls;
-3. connect `Button Click -> Set Text` in the Blueprint workspace;
-4. generate and run TypeScript in the sandboxed preview runtime;
-5. let the Agent propose the same change through structured operations;
-6. preview, apply, and undo the transaction.
+1. create an empty document and open an Add Element palette;
+2. insert Box, Text, Button, Image, and Input nodes through `InsertNode` transactions;
+3. reorder and reparent nodes through hierarchy and Stage gestures;
+4. expose operation failures in Problems without corrupting history;
+5. add selection-aware keyboard delete/duplicate and exact undo/redo;
+6. then begin `Button Click -> Set Text` in the minimal Blueprint workspace.
 
-This slice validates the Element Model, Property Schema, Blueprint IR, runtime boundary, Agent
-bridge, and undo history together.
+This slice closes the remaining M1.2 structural gap while keeping every edit on the Project Model.

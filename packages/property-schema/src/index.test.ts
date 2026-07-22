@@ -74,6 +74,14 @@ describe("property schema registry", () => {
     expect(textTag?.options?.map((option) => option.value)).toContain("h6");
     expect(textTag?.options?.map((option) => option.value)).not.toContain("section");
   });
+  it("maps registry ids to real HTML and CSS storage keys", () => {
+    const registry = createDefaultPropertySchemaRegistry();
+    expect(registry.getProperty("buttonType").storageKey).toBe("type");
+    expect(registry.getProperty("inputType").storageKey).toBe("type");
+    expect(registry.getProperty("imageSource").storageKey).toBe("src");
+    expect(registry.getProperty("backgroundColor").storageKey).toBe("background-color");
+    expect(registry.getProperty("tag").target).toBe("tag");
+  });
   it("handles malformed definitions and unknown lookups", () => {
     const registry = createDefaultPropertySchemaRegistry();
     expect(registry.findProperty("missing")).toBeUndefined();
