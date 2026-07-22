@@ -62,6 +62,9 @@ sources of truth.
   model-derived hierarchy, schema-generated Design/Content controls, responsive/state scopes,
   persistent Project Store, exact undo/redo, an Agent transaction example, and a searchable Add
   Element panel that inserts all five primitives through Before/Inside/After transactions.
+- **M1.2 structural commands:** a protected Box page-root sentinel, canonical sibling move up/down,
+  indent into the previous Box, outdent after the current parent, deep subtree duplicate, subtree
+  delete, hierarchy-scoped keyboard commands, and selection-aware Undo/Redo.
 
 The active editor data path is:
 
@@ -76,14 +79,14 @@ Inspector / Stage / Agent intent
 
 ### Active next slice
 
-Continue structural authoring before implementing Blueprint execution:
+Finish the Stage gesture and diagnostic parts of structural authoring before Blueprint execution:
 
-1. decide whether empty pages use a true empty document or an undeletable page-root sentinel;
-2. support reparenting and reordering through hierarchy and Stage gestures;
-3. add delete/duplicate keyboard actions with exact history;
-4. add Stage placement previews and between-sibling drop targets;
-5. route reducer/runtime failures into Problems;
-6. then begin `Button Click -> Set Text` in the minimal Blueprint workspace.
+1. add Stage placement previews, parent highlighting, and between-sibling drop targets;
+2. route reducer/runtime failures into Problems;
+3. guard deletion against external node references and handle authored DOM IDs during duplicate;
+4. define an explicit migration/diagnostic path for imported documents without a valid Box page
+   root;
+5. then begin `Button Click -> Set Text` in the minimal Blueprint workspace.
 
 ## Important implementation boundaries
 
@@ -98,7 +101,13 @@ Continue structural authoring before implementing Blueprint execution:
   source in recognized compound nodes or typed Code Nodes.
 - Primitive insertion uses opaque, non-recycled type-prefixed UUIDs. The Add UI currently treats
   only Box as a safe arbitrary-primitive parent.
-- Problems/diagnostics, structural reordering, and runtime Blueprint execution are not complete yet.
+- `rootNodeIds[0]` is the Studio page-root sentinel. It stays fixed and cannot be deleted, moved,
+  duplicated, or given root siblings. Extra roots from older projects can be normalized into it.
+  This is an editor policy layered above the generic Project Model root array.
+- Hierarchy structure shortcuts run only while the hierarchy/tree toolbar owns focus; Inspector and
+  search inputs retain native editing behavior.
+- Problems/diagnostics, Stage drag placement, external-reference repair, imported-root migration,
+  and runtime Blueprint execution are not complete yet.
 
 ## Repository map
 

@@ -28,17 +28,19 @@ an adapter. A missing `documentId` resolves to the active document when applied.
 inverse always stores the resolved document ID, so changing the active page before Undo cannot
 redirect history to another document.
 
-Persistent history and Agent proposals will wrap reducer operations with operation IDs, timestamps,
-labels, and project identity at the application layer. Those envelope fields do not affect reducer
-semantics.
+Persistent history and Agent proposals wrap reducer operations with operation IDs, timestamps,
+labels, project identity, and editor context at the application layer. The current Studio history
+records optional `selectionBefore` and `selectionAfter` values so structural Undo/Redo can restore
+the intended element. Those envelope fields do not affect reducer semantics.
 
 ## Node operations
 
 ### InsertNode
 
-Payload includes the complete new node, target parent or root placement, and index. Application
-rejects duplicate IDs, nonexistent parents, incompatible parent/child relationships known to the
-core, and out-of-range indices.
+Payload includes the complete new node, target parent or root placement, and index. The reducer
+rejects duplicate IDs, nonexistent parents, malformed subtrees, and out-of-range indices. Semantic
+HTML and Registry parent/child compatibility is a producer policy layered above the generic tree
+reducer; the Studio currently permits arbitrary primitive composition only inside Box.
 
 Its inverse is `RemoveNode` for the inserted root ID. If that inverse is applied, `RemoveNode`
 captures the then-current subtree for its own inverse; editor redo normally replays the original

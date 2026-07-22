@@ -29,6 +29,22 @@ function homeDocument(project: StrataProject): StrataDocument {
   return document;
 }
 
+function layerButton(container: Element, label: string): HTMLButtonElement {
+  const button = [...container.querySelectorAll<HTMLButtonElement>('[role="treeitem"]')].find(
+    (candidate) => candidate.textContent?.includes(label),
+  );
+  if (!button) throw new Error(`Missing '${label}' hierarchy node`);
+  return button;
+}
+
+function selectedLayer(container: Element): HTMLButtonElement {
+  const button = container.querySelector<HTMLButtonElement>(
+    '[role="treeitem"][aria-selected="true"]',
+  );
+  if (!button) throw new Error("The hierarchy selection is missing");
+  return button;
+}
+
 function storedWidth(): number | undefined {
   const project = storedProject();
   if (!project) return undefined;
@@ -155,6 +171,7 @@ describe("Strata Studio model integration", () => {
     expect(insertedDocument.nodes.hero?.children.at(-1)).toBe(inserted.id);
     expect(container.textContent).toContain("12 nodes · compiled stage");
     expect(container.textContent).toContain(`Text · ${inserted.id}`);
+    expect(selectedLayer(container).textContent).toContain("Text");
     expect(container.querySelector<HTMLIFrameElement>(".model-stage-frame")?.srcdoc).toContain(
       `data-strata-node-id="${inserted.id}"`,
     );
@@ -165,10 +182,122 @@ describe("Strata Studio model integration", () => {
     await act(async () => undo.click());
     expect(requiredStoredProject().documents.home?.nodes[inserted.id]).toBeUndefined();
     expect(container.textContent).toContain("11 nodes · compiled stage");
+    expect(selectedLayer(container).textContent).toContain("Primary action");
 
     await act(async () => redo.click());
     expect(requiredStoredProject().documents.home?.nodes[inserted.id]).toEqual(inserted);
     expect(requiredStoredProject().documents.home?.nodes.hero?.children.at(-1)).toBe(inserted.id);
+    expect(selectedLayer(container).textContent).toContain("Text");
+  });
+
+  it("moves elements from hierarchy shortcuts without hijacking text inputs", async () => {
+    const initial = [...(homeDocument(requiredStoredProject()).nodes.hero?.children ?? [])];
+    const filter = container.querySelector<HTMLInputElement>(
+      'input[aria-label="Filter hierarchy"]',
+    );
+    if (!filter) throw new Error("Hierarchy filter is missing");
+    filter.focus();
+    await act(async () =>
+      filter.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "ArrowUp",
+          altKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    );
+    expect(homeDocument(requiredStoredProject()).nodes.hero?.children).toEqual(initial);
+
+    const primaryAction = layerButton(container, "Primary action");
+    primaryAction.focus();
+    await act(async () =>
+      primaryAction.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "ArrowUp",
+          altKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    );
+    expect(homeDocument(requiredStoredProject()).nodes.hero?.children).toEqual([
+      "eyebrow",
+      "headline",
+      "primary-action",
+      "lede",
+    ]);
+    expect(selectedLayer(container).textContent).toContain("Primary action");
+
+    const undo = container.querySelector<HTMLButtonElement>('button[aria-label="Undo"]');
+    const redo = container.querySelector<HTMLButtonElement>('button[aria-label="Redo"]');
+    if (!undo || !redo) throw new Error("History controls are missing");
+    await act(async () => undo.click());
+    expect(homeDocument(requiredStoredProject()).nodes.hero?.children).toEqual(initial);
+    await act(async () => redo.click());
+    expect(homeDocument(requiredStoredProject()).nodes.hero?.children).toEqual([
+      "eyebrow",
+      "headline",
+      "primary-action",
+      "lede",
+    ]);
+  });
+
+  it("duplicates and deletes a subtree with selection-aware undo and redo", async () => {
+    const primaryAction = selectedLayer(container);
+    primaryAction.focus();
+    await act(async () =>
+      primaryAction.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "d",
+          ctrlKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    );
+
+    const duplicatedProject = requiredStoredProject();
+    const duplicatedDocument = homeDocument(duplicatedProject);
+    const duplicateId = duplicatedDocument.nodes.hero?.children.at(-1);
+    if (!duplicateId?.startsWith("button-")) throw new Error("Duplicated Button is missing");
+    expect(duplicatedDocument.nodes[duplicateId]?.editor.name).toBe("Primary action copy");
+    expect(selectedLayer(container).textContent).toContain("Primary action copy");
+    expect(container.querySelector<HTMLIFrameElement>(".model-stage-frame")?.srcdoc).toContain(
+      `data-strata-node-id="${duplicateId}"`,
+    );
+
+    const undo = container.querySelector<HTMLButtonElement>('button[aria-label="Undo"]');
+    const redo = container.querySelector<HTMLButtonElement>('button[aria-label="Redo"]');
+    if (!undo || !redo) throw new Error("History controls are missing");
+    await act(async () => undo.click());
+    expect(homeDocument(requiredStoredProject()).nodes[duplicateId]).toBeUndefined();
+    expect(selectedLayer(container).textContent).toContain("Primary action");
+    await act(async () => redo.click());
+    expect(homeDocument(requiredStoredProject()).nodes[duplicateId]).toEqual(
+      duplicatedDocument.nodes[duplicateId],
+    );
+    expect(selectedLayer(container).textContent).toContain("Primary action copy");
+
+    const copiedLayer = selectedLayer(container);
+    copiedLayer.focus();
+    await act(async () =>
+      copiedLayer.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Delete",
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    );
+    expect(homeDocument(requiredStoredProject()).nodes[duplicateId]).toBeUndefined();
+    expect(selectedLayer(container).textContent).toContain("Primary action");
+    await act(async () => undo.click());
+    expect(homeDocument(requiredStoredProject()).nodes[duplicateId]).toBeDefined();
+    expect(selectedLayer(container).textContent).toContain("Primary action copy");
+    await act(async () => redo.click());
+    expect(homeDocument(requiredStoredProject()).nodes[duplicateId]).toBeUndefined();
+    expect(selectedLayer(container).textContent).toContain("Primary action");
   });
 
   it("opens Add Element from the keyboard command palette without hijacking text input", async () => {

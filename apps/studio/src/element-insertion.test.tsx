@@ -21,7 +21,7 @@ describe("element insertion", () => {
     );
   });
 
-  it("resolves inside, before, after, and document-root placement", () => {
+  it("resolves inside, before, after, and protected page-root placement", () => {
     const project = createStudioProject();
 
     expect(resolveInsertionTarget(project, "hero", "inside", "Text")).toEqual({
@@ -37,8 +37,12 @@ describe("element insertion", () => {
       index: 4,
     });
     expect(resolveInsertionTarget(project, null, "after", "Text")).toEqual({
-      parentId: null,
-      index: 1,
+      parentId: "page-root",
+      index: 3,
+    });
+    expect(resolveInsertionTarget(project, "stale-selection", "after", "Text")).toEqual({
+      parentId: "page-root",
+      index: 3,
     });
   });
 
@@ -49,6 +53,19 @@ describe("element insertion", () => {
       /cannot contain primitive/,
     );
     expect(() => resolveInsertionTarget(project, "signal-image", "inside", "Box")).toThrow(
+      /cannot contain primitive/,
+    );
+    expect(() => resolveInsertionTarget(project, "page-root", "before", "Text")).toThrow(
+      /protected/,
+    );
+    expect(() => resolveInsertionTarget(project, "page-root", "after", "Text")).toThrow(
+      /protected/,
+    );
+
+    const document = project.documents.home;
+    if (!document?.nodes["page-root"]) throw new Error("The page-root fixture node is missing");
+    document.nodes["page-root"].type = "Text";
+    expect(() => resolveInsertionTarget(project, null, "inside", "Text")).toThrow(
       /cannot contain primitive/,
     );
   });

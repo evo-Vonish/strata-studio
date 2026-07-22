@@ -20,11 +20,24 @@ export function acceptsInsertedChildren(node: StrataNode | null): boolean {
   return node.type === "Box";
 }
 
-function validateParent(parent: StrataNode, childType: BasicElementType): void {
+export function pageRootNode(document: StrataDocument): StrataNode {
+  const rootId = document.rootNodeIds[0];
+  const root = rootId ? document.nodes[rootId] : undefined;
+  if (!root) throw new Error("The document page root is not available");
+  return root;
+}
+
+export function isPageRoot(document: StrataDocument, nodeId: string): boolean {
+  return document.rootNodeIds[0] === nodeId;
+}
+
+export function assertCanContainElement(parent: StrataNode, childType: string): void {
   if (!acceptsInsertedChildren(parent))
     throw new Error(`${parent.editor.name ?? parent.type} cannot contain primitive elements`);
   const parentDefinition = propertySchema.findElement(parent.type);
-  const childDefinition = propertySchema.getElement(childType);
+  const childDefinition = propertySchema.findElement(childType);
+  if (!childDefinition)
+    throw new Error(`Unsupported element type '${childType}' cannot be reparented safely`);
   if (parentDefinition?.allowedChildren && !parentDefinition.allowedChildren.includes(childType))
     throw new Error(`${parent.type} does not allow ${childType} children`);
   if (childDefinition.allowedParents && !childDefinition.allowedParents.includes(parent.type))
@@ -57,21 +70,25 @@ export function resolveInsertionTarget(
   const document = project.documents[project.activeDocumentId];
   if (!document) throw new Error("The active document is not available");
   const selected = selectedNodeId ? document.nodes[selectedNodeId] : undefined;
-  if (!selected) return { parentId: null, index: document.rootNodeIds.length };
+  if (!selected) {
+    const pageRoot = pageRootNode(document);
+    assertCanContainElement(pageRoot, childType);
+    return { parentId: pageRoot.id, index: pageRoot.children.length };
+  }
 
   if (placement === "inside") {
-    validateParent(selected, childType);
+    assertCanContainElement(selected, childType);
     return { parentId: selected.id, index: selected.children.length };
   }
 
-  const siblings =
-    selected.parentId === null ? document.rootNodeIds : document.nodes[selected.parentId]?.children;
+  if (selected.parentId === null)
+    throw new Error("Page-level roots are protected; insert inside a Box instead");
+
+  const siblings = document.nodes[selected.parentId]?.children;
   if (!siblings) throw new Error("The selected node parent is not available");
-  if (selected.parentId) {
-    const parent = document.nodes[selected.parentId];
-    if (!parent) throw new Error("The selected node parent is not available");
-    validateParent(parent, childType);
-  }
+  const parent = document.nodes[selected.parentId];
+  if (!parent) throw new Error("The selected node parent is not available");
+  assertCanContainElement(parent, childType);
   const selectedIndex = siblings.indexOf(selected.id);
   if (selectedIndex < 0) throw new Error("The selected node is missing from its parent");
   return {

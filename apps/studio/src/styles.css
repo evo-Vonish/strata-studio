@@ -1621,6 +1621,67 @@ body.is-resizing-row * {
   font-size: 7px;
 }
 
+.hierarchy-command-panel {
+  padding: 6px 7px;
+  display: grid;
+  gap: 5px;
+  border-bottom: 1px solid #222931;
+  background: #12171c;
+}
+
+.hierarchy-command-panel > div:first-child {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+}
+
+.hierarchy-command-panel > div:first-child span {
+  overflow: hidden;
+  color: #9ca5af;
+  font-size: 8px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hierarchy-command-panel > div:first-child code {
+  flex: 0 0 auto;
+  padding: 2px 5px;
+  border: 1px solid #303842;
+  border-radius: 8px;
+  color: #7f8a96;
+  background: #0d1115;
+  font:
+    6px "DM Mono",
+    monospace;
+  text-transform: uppercase;
+}
+
+.hierarchy-command-panel > div:last-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1px;
+}
+
+.hierarchy-command-panel .icon-button {
+  width: 25px;
+  height: 24px;
+}
+
+.hierarchy-command-panel .icon-button:last-child:not(:disabled) {
+  color: #c67784;
+}
+
+.hierarchy-action-divider {
+  width: 1px;
+  height: 15px;
+  margin: 0 2px;
+  background: #2b323b;
+}
+
 .layer-tree {
   min-height: 0;
   flex: 1;

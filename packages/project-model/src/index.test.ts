@@ -115,6 +115,33 @@ describe("project model", () => {
     const removed = applyOperation(moved.project, { type: "RemoveNode", nodeId: "b" });
     expect(removed.project.documents.d?.rootNodeIds).not.toContain("b");
   });
+  it("protects the final root and restores cross-parent moves exactly", () => {
+    expect(() =>
+      applyOperation(project, {
+        type: "RemoveNode",
+        documentId: "second",
+        nodeId: "second-root",
+      }),
+    ).toThrow(/retain at least one root/);
+
+    const moved = applyOperation(project, {
+      type: "MoveNode",
+      nodeId: "b",
+      parentId: "other",
+      index: 0,
+    });
+    expect(moved.project.documents.d?.nodes.other?.children).toEqual(["b"]);
+    expect(moved.project.documents.d?.nodes.b?.parentId).toBe("other");
+    expect(applyOperation(moved.project, moved.inverse).project).toEqual(project);
+    expect(() =>
+      applyOperation(project, {
+        type: "MoveNode",
+        nodeId: "b",
+        parentId: "other",
+        index: 2,
+      }),
+    ).toThrow(/index/);
+  });
   it("checks indexes and uses the selected document only", () => {
     const fresh = node("new", "root");
     expect(() =>

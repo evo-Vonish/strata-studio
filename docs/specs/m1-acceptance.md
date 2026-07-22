@@ -34,8 +34,10 @@ M1.1 is complete when:
 Status: active. The model-backed renderer, stable selection, schema Inspector, scoped property
 editing, local persistence, Agent transaction example, exact undo/redo, and the first Add Element
 flow are implemented. Five primitives can now be searched and inserted Before/Inside/After through
-canonical transactions. Empty-document creation, reordering/reparenting gestures, delete/duplicate,
-and user-facing operation diagnostics remain before this gate is complete.
+canonical transactions. A protected page-root sentinel and hierarchy commands now cover canonical
+move up/down, indent/outdent, deep duplicate, subtree delete, scoped keyboard actions, and
+selection-aware history. Stage drag/drop placement, imported-root migration, reference-integrity
+checks, and user-facing operation diagnostics remain before this gate is complete.
 
 - create an empty page and insert the five initial elements;
 - select through a stable Strata node ID;

@@ -36,12 +36,13 @@ Four implementation checkpoints are present in the repository:
   first Box, Text, Button, Image, and Input definitions.
 - **M1.2 model-backed Stage core:** a deterministic, sandboxed DOM Runtime; a persistent Project
   Store with undo/redo; a model-derived hierarchy; and schema-generated Design/Content controls
-  wired to the same operation protocol used by the Agent prototype. Its first structural slice adds
-  a searchable five-primitive palette and Before/Inside/After `InsertNode` transactions.
+  wired to the same operation protocol used by the Agent prototype. Structural authoring now adds a
+  searchable five-primitive palette, a protected page-root container, move/indent/outdent commands,
+  deep duplicate, subtree delete, and selection-aware history.
 
 The Stage is now a projection of the Project Model rather than an independently mutable React DOM
-tree. The remaining M1.2 work is empty-page policy, reordering/reparenting gestures, delete/
-duplicate commands, Stage placement feedback, and stronger diagnostics for invalid operations.
+tree. The remaining M1.2 work is Stage drag/drop placement feedback, stronger diagnostics, imported
+page-root migration, and reference-integrity handling for delete/duplicate.
 
 ## E0 Element Extractor
 
@@ -125,11 +126,10 @@ No upstream repository is vendored into this repository. Research clones live ou
 
 The next slice continues structural Stage authoring before Blueprint execution:
 
-1. decide between a true empty document and a permanent page-root sentinel;
-2. reorder and reparent nodes through hierarchy and Stage gestures;
-3. add selection-aware keyboard delete/duplicate with exact undo/redo;
-4. expose operation failures in Problems without corrupting history;
-5. add layout-aware Stage insertion previews and between-sibling drop targets;
-6. then begin `Button Click -> Set Text` in the minimal Blueprint workspace.
+1. add layout-aware Stage insertion previews, parent highlighting, and between-sibling drop targets;
+2. expose operation and runtime failures in Problems without corrupting history;
+3. diagnose external node references before subtree deletion and authored DOM IDs before duplicate;
+4. define explicit migration for imported documents whose first root is not a valid Box container;
+5. then begin `Button Click -> Set Text` in the minimal Blueprint workspace.
 
 This slice closes the remaining M1.2 structural gap while keeping every edit on the Project Model.

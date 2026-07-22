@@ -18,6 +18,7 @@ export type InsertableElementType = BasicElementType;
 
 interface AddElementPanelProps {
   selectedNode: StrataNode | null;
+  selectedIsRoot: boolean;
   error: string | null;
   onClose: () => void;
   onInsert: (type: InsertableElementType, placement: InsertionPlacement) => void;
@@ -71,7 +72,13 @@ function defaultPlacement(node: StrataNode | null): InsertionPlacement {
   return node?.type === "Box" ? "inside" : "after";
 }
 
-export function AddElementPanel({ selectedNode, error, onClose, onInsert }: AddElementPanelProps) {
+export function AddElementPanel({
+  selectedNode,
+  selectedIsRoot,
+  error,
+  onClose,
+  onInsert,
+}: AddElementPanelProps) {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [placement, setPlacement] = useState<InsertionPlacement>(() =>
@@ -127,6 +134,8 @@ export function AddElementPanel({ selectedNode, error, onClose, onInsert }: AddE
             <button
               className={placement === "before" ? "active" : ""}
               type="button"
+              disabled={selectedIsRoot}
+              title={selectedIsRoot ? "Page-level roots cannot gain siblings" : "Insert before"}
               onClick={() => setPlacement("before")}
             >
               Before
@@ -145,13 +154,15 @@ export function AddElementPanel({ selectedNode, error, onClose, onInsert }: AddE
             <button
               className={placement === "after" ? "active" : ""}
               type="button"
+              disabled={selectedIsRoot}
+              title={selectedIsRoot ? "Page-level roots cannot gain siblings" : "Insert after"}
               onClick={() => setPlacement("after")}
             >
               After
             </button>
           </fieldset>
         ) : (
-          <small>The element will be appended to the document root.</small>
+          <small>The element will be appended inside the protected page root.</small>
         )}
       </section>
 

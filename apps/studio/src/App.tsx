@@ -13,6 +13,8 @@ import type {
 } from "@strata/project-model";
 import {
   Activity,
+  ArrowDown,
+  ArrowUp,
   Bot,
   Box,
   Braces,
@@ -22,6 +24,7 @@ import {
   Code2,
   Command,
   Component as ComponentIcon,
+  Copy,
   Download,
   Eye,
   FileCode2,
@@ -30,6 +33,8 @@ import {
   Globe2,
   Hand,
   Image as ImageIcon,
+  IndentDecrease,
+  IndentIncrease,
   Library,
   type LucideIcon,
   Maximize2,
@@ -50,6 +55,7 @@ import {
   Sparkles,
   Tablet,
   Terminal,
+  Trash2,
   Type,
   Undo2,
   Workflow,
@@ -72,15 +78,23 @@ import { createElementNode } from "./element-factory";
 import {
   createElementId,
   type InsertionPlacement,
+  isPageRoot,
   resolveInsertionTarget,
 } from "./element-insertion";
+import {
+  createDeleteElementCommand,
+  createDuplicateElementCommand,
+  createMoveElementCommand,
+  getElementStructureCapabilities,
+  type StructureMoveDirection,
+} from "./element-structure";
 import { ModelInspector } from "./model-inspector";
 import {
   createStudioProject,
   selectedNode as findSelectedNode,
   INITIAL_SELECTED_NODE_ID,
 } from "./studio-project";
-import { useProjectStore } from "./use-project-store";
+import { type ProjectHistoryContext, useProjectStore } from "./use-project-store";
 
 type WorkspaceMode = "stage" | "blueprint" | "agent";
 type ActivityTool = "hierarchy" | "blocks" | "assets" | "search";
@@ -115,6 +129,11 @@ interface OperationItem {
   tone: "edit" | "system" | "agent";
 }
 
+interface ApplyModelOptions {
+  tone?: OperationItem["tone"];
+  history?: ProjectHistoryContext;
+}
+
 interface LayerNode {
   id: string;
   label: string;
@@ -122,6 +141,23 @@ interface LayerNode {
   depth: number;
   icon: LucideIcon;
   expanded: boolean;
+}
+
+interface HierarchyCommands {
+  label: string;
+  protectedRoot: boolean;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+  canIndent: boolean;
+  canOutdent: boolean;
+  canDuplicate: boolean;
+  canDelete: boolean;
+  moveUp: () => void;
+  moveDown: () => void;
+  indent: () => void;
+  outdent: () => void;
+  duplicate: () => void;
+  remove: () => void;
 }
 
 const DEFAULT_PROPERTIES: ElementProperties = {
@@ -390,12 +426,14 @@ function NavigatorPanel({
   tool,
   project,
   selectedNodeId,
+  structure,
   onAdd,
   onSelect,
 }: {
   tool: ActivityTool;
   project: StrataProject;
   selectedNodeId: string | null;
+  structure?: HierarchyCommands | undefined;
   onAdd: () => void;
   onSelect: (nodeId: string) => void;
 }) {
@@ -430,6 +468,53 @@ function NavigatorPanel({
             </span>
             <small>{layers.length}</small>
           </div>
+          {structure && (
+            <div className="hierarchy-command-panel">
+              <div>
+                <span>{structure.label}</span>
+                <code>{structure.protectedRoot ? "Page root" : "Structure"}</code>
+              </div>
+              <div role="toolbar" aria-label="Selected element structure actions">
+                <IconButton
+                  icon={ArrowUp}
+                  label="Move up (Alt+↑)"
+                  disabled={!structure.canMoveUp}
+                  onClick={structure.moveUp}
+                />
+                <IconButton
+                  icon={ArrowDown}
+                  label="Move down (Alt+↓)"
+                  disabled={!structure.canMoveDown}
+                  onClick={structure.moveDown}
+                />
+                <IconButton
+                  icon={IndentDecrease}
+                  label="Move out (Alt+←)"
+                  disabled={!structure.canOutdent}
+                  onClick={structure.outdent}
+                />
+                <IconButton
+                  icon={IndentIncrease}
+                  label="Move inside previous Box (Alt+→)"
+                  disabled={!structure.canIndent}
+                  onClick={structure.indent}
+                />
+                <span className="hierarchy-action-divider" />
+                <IconButton
+                  icon={Copy}
+                  label="Duplicate subtree (Mod+D)"
+                  disabled={!structure.canDuplicate}
+                  onClick={structure.duplicate}
+                />
+                <IconButton
+                  icon={Trash2}
+                  label="Delete subtree (Delete)"
+                  disabled={!structure.canDelete}
+                  onClick={structure.remove}
+                />
+              </div>
+            </div>
+          )}
           <div className="layer-tree" role="tree" aria-label="Page hierarchy">
             {layers.map((node) => {
               const active = selectedNodeId === node.id;
@@ -932,13 +1017,13 @@ export function App() {
   }, [paletteOpen]);
 
   const applyModelOperations = useCallback(
-    (nextOperations: ProjectOperation[], label: string, tone: OperationItem["tone"] = "edit") => {
+    (nextOperations: ProjectOperation[], label: string, options: ApplyModelOptions = {}) => {
       if (nextOperations.length === 0) return;
-      applyOperations(nextOperations, label);
+      applyOperations(nextOperations, label, options.history);
       addOperation(
         nextOperations.length === 1 ? (nextOperations[0]?.type ?? "Operation") : "Transaction",
         `${label} · ${nextOperations.length} operation${nextOperations.length === 1 ? "" : "s"}`,
-        tone,
+        options.tone ?? "edit",
       );
     },
     [addOperation, applyOperations],
@@ -965,6 +1050,9 @@ export function App() {
             },
           ],
           `Insert ${type}`,
+          {
+            history: { selectionBefore: selectedNodeId, selectionAfter: nodeId },
+          },
         );
         setSelectedNodeId(nodeId);
         setSelected(null);
@@ -982,14 +1070,127 @@ export function App() {
     [addOperation, applyModelOperations, project, selectedNodeId],
   );
 
+  const moveElement = useCallback(
+    (direction: StructureMoveDirection) => {
+      if (!selectedNodeId) return;
+      try {
+        const command = createMoveElementCommand(project, selectedNodeId, direction);
+        const labels: Record<StructureMoveDirection, string> = {
+          up: "Move element up",
+          down: "Move element down",
+          indent: "Move element inside previous Box",
+          outdent: "Move element out",
+        };
+        applyModelOperations(command.operations, labels[direction], {
+          history: {
+            selectionBefore: selectedNodeId,
+            selectionAfter: command.selectionNodeId,
+          },
+        });
+        setSelectedNodeId(command.selectionNodeId);
+        setSelected(null);
+        setHovered(null);
+        setError(null);
+      } catch (caught) {
+        const message = caught instanceof Error ? caught.message : "Could not move the element";
+        setError(message);
+        addOperation("Move failed", message, "system");
+      }
+    },
+    [addOperation, applyModelOperations, project, selectedNodeId],
+  );
+
+  const duplicateElement = useCallback(() => {
+    if (!selectedNodeId) return;
+    try {
+      const command = createDuplicateElementCommand(project, selectedNodeId);
+      applyModelOperations(command.operations, "Duplicate subtree", {
+        history: {
+          selectionBefore: selectedNodeId,
+          selectionAfter: command.selectionNodeId,
+        },
+      });
+      setSelectedNodeId(command.selectionNodeId);
+      setSelected(null);
+      setHovered(null);
+      setError(null);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "Could not duplicate the element";
+      setError(message);
+      addOperation("Duplicate failed", message, "system");
+    }
+  }, [addOperation, applyModelOperations, project, selectedNodeId]);
+
+  const deleteElement = useCallback(() => {
+    if (!selectedNodeId) return;
+    try {
+      const command = createDeleteElementCommand(project, selectedNodeId);
+      applyModelOperations(command.operations, "Delete subtree", {
+        history: {
+          selectionBefore: selectedNodeId,
+          selectionAfter: command.selectionFallbackId,
+        },
+      });
+      setSelectedNodeId(command.selectionFallbackId);
+      setSelected(null);
+      setHovered(null);
+      setError(null);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "Could not delete the element";
+      setError(message);
+      addOperation("Delete failed", message, "system");
+    }
+  }, [addOperation, applyModelOperations, project, selectedNodeId]);
+
+  const structureCapabilities = useMemo(
+    () => getElementStructureCapabilities(project, selectedNodeId),
+    [project, selectedNodeId],
+  );
+
+  const structureCommands = useMemo<HierarchyCommands | undefined>(() => {
+    if (!modelNode) return undefined;
+    const document = project.documents[project.activeDocumentId];
+    return {
+      label: modelNode.editor.name ?? modelNode.type,
+      protectedRoot: document ? isPageRoot(document, modelNode.id) : false,
+      ...structureCapabilities,
+      moveUp: () => moveElement("up"),
+      moveDown: () => moveElement("down"),
+      indent: () => moveElement("indent"),
+      outdent: () => moveElement("outdent"),
+      duplicate: duplicateElement,
+      remove: deleteElement,
+    };
+  }, [
+    deleteElement,
+    duplicateElement,
+    modelNode,
+    moveElement,
+    project.activeDocumentId,
+    project.documents,
+    structureCapabilities,
+  ]);
+
   const undo = useCallback(() => {
-    const label = undoProject();
-    if (label) addOperation("Undo", label, "system");
+    const result = undoProject();
+    if (!result) return;
+    if (result.selectionId !== undefined) {
+      setSelectedNodeId(result.selectionId);
+      setSelected(null);
+      setHovered(null);
+    }
+    addOperation("Undo", result.label, "system");
   }, [addOperation, undoProject]);
 
   const redo = useCallback(() => {
-    const label = redoProject();
-    if (label) addOperation("Redo", label, "system");
+    const result = redoProject();
+    if (!result) return;
+    if (result.selectionId !== undefined) {
+      setSelectedNodeId(result.selectionId);
+      setSelected(null);
+      setHovered(null);
+    }
+    addOperation("Redo", result.label, "system");
   }, [addOperation, redoProject]);
 
   const commitStyles = useCallback(
@@ -1083,6 +1284,11 @@ export function App() {
       const isEditing =
         target instanceof HTMLElement &&
         (target.matches("input, textarea, select") || target.isContentEditable);
+      const ownsStructureShortcut =
+        target instanceof HTMLElement &&
+        Boolean(target.closest(".layer-tree, .hierarchy-command-panel"));
+      const structureShortcutBlocked =
+        isEditing || event.isComposing || paletteOpen || addElementOpen;
       if (modifier && event.key.toLowerCase() === "k") {
         event.preventDefault();
         openCommandPalette();
@@ -1092,13 +1298,86 @@ export function App() {
       } else if (modifier && event.key.toLowerCase() === "j") {
         event.preventDefault();
         setBottomOpen((value) => !value);
-      } else if (modifier && event.key.toLowerCase() === "z" && event.shiftKey) {
+      } else if (
+        modifier &&
+        event.key.toLowerCase() === "z" &&
+        event.shiftKey &&
+        !isEditing &&
+        !event.isComposing
+      ) {
         event.preventDefault();
         redo();
-      } else if (modifier && event.key.toLowerCase() === "z") {
+      } else if (modifier && event.key.toLowerCase() === "z" && !isEditing && !event.isComposing) {
         event.preventDefault();
         undo();
-      } else if (event.key.toLowerCase() === "p" && !modifier && !event.altKey && !isEditing) {
+      } else if (
+        modifier &&
+        event.key.toLowerCase() === "d" &&
+        ownsStructureShortcut &&
+        !structureShortcutBlocked &&
+        !event.repeat &&
+        structureCapabilities.canDuplicate
+      ) {
+        event.preventDefault();
+        duplicateElement();
+      } else if (
+        event.altKey &&
+        !modifier &&
+        ownsStructureShortcut &&
+        !structureShortcutBlocked &&
+        event.key === "ArrowUp" &&
+        structureCapabilities.canMoveUp
+      ) {
+        event.preventDefault();
+        moveElement("up");
+      } else if (
+        event.altKey &&
+        !modifier &&
+        ownsStructureShortcut &&
+        !structureShortcutBlocked &&
+        event.key === "ArrowDown" &&
+        structureCapabilities.canMoveDown
+      ) {
+        event.preventDefault();
+        moveElement("down");
+      } else if (
+        event.altKey &&
+        !modifier &&
+        ownsStructureShortcut &&
+        !structureShortcutBlocked &&
+        event.key === "ArrowLeft" &&
+        structureCapabilities.canOutdent
+      ) {
+        event.preventDefault();
+        moveElement("outdent");
+      } else if (
+        event.altKey &&
+        !modifier &&
+        ownsStructureShortcut &&
+        !structureShortcutBlocked &&
+        event.key === "ArrowRight" &&
+        structureCapabilities.canIndent
+      ) {
+        event.preventDefault();
+        moveElement("indent");
+      } else if (
+        !modifier &&
+        !event.altKey &&
+        ownsStructureShortcut &&
+        !structureShortcutBlocked &&
+        !event.repeat &&
+        (event.key === "Delete" || event.key === "Backspace") &&
+        structureCapabilities.canDelete
+      ) {
+        event.preventDefault();
+        deleteElement();
+      } else if (
+        event.key.toLowerCase() === "p" &&
+        !modifier &&
+        !event.altKey &&
+        !isEditing &&
+        !event.isComposing
+      ) {
         setSelectMode((value) => !value);
       } else if (event.key === "Escape") {
         if (paletteOpen) closeCommandPalette();
@@ -1108,7 +1387,18 @@ export function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [closeCommandPalette, openCommandPalette, paletteOpen, redo, undo]);
+  }, [
+    addElementOpen,
+    closeCommandPalette,
+    deleteElement,
+    duplicateElement,
+    moveElement,
+    openCommandPalette,
+    paletteOpen,
+    redo,
+    structureCapabilities,
+    undo,
+  ]);
 
   const startResize = (target: ResizeTarget, event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -1190,7 +1480,7 @@ export function App() {
       },
     ];
     setSelectedNodeId(INITIAL_SELECTED_NODE_ID);
-    applyModelOperations(operations, "Agent plan · Primary action", "agent");
+    applyModelOperations(operations, "Agent plan · Primary action", { tone: "agent" });
     setWorkspaceMode("stage");
   };
 
@@ -1394,6 +1684,7 @@ export function App() {
         {addElementOpen ? (
           <AddElementPanel
             selectedNode={modelNode}
+            selectedIsRoot={modelNode?.parentId === null}
             error={error}
             onClose={() => setAddElementOpen(false)}
             onInsert={insertElement}
@@ -1403,6 +1694,7 @@ export function App() {
             tool={activeTool}
             project={project}
             selectedNodeId={selectedNodeId}
+            structure={structureCommands}
             onAdd={openAddElement}
             onSelect={selectFromTree}
           />
