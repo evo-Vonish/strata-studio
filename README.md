@@ -36,11 +36,12 @@ Four implementation checkpoints are present in the repository:
   first Box, Text, Button, Image, and Input definitions.
 - **M1.2 model-backed Stage core:** a deterministic, sandboxed DOM Runtime; a persistent Project
   Store with undo/redo; a model-derived hierarchy; and schema-generated Design/Content controls
-  wired to the same operation protocol used by the Agent prototype.
+  wired to the same operation protocol used by the Agent prototype. Its first structural slice adds
+  a searchable five-primitive palette and Before/Inside/After `InsertNode` transactions.
 
 The Stage is now a projection of the Project Model rather than an independently mutable React DOM
-tree. The remaining M1.2 work is authoring structure itself: an Add Element palette, insertion and
-reordering gestures, empty-page creation, and stronger diagnostics for invalid operations.
+tree. The remaining M1.2 work is empty-page policy, reordering/reparenting gestures, delete/
+duplicate commands, Stage placement feedback, and stronger diagnostics for invalid operations.
 
 ## E0 Element Extractor
 
@@ -84,6 +85,7 @@ The preview runs without scripts or pointer interaction and carries a restrictiv
 | [Element Model and Property Schema](docs/architecture/element-model-and-property-schema.md) | Element registry, capabilities, typed values, state scopes, import/export, and first implementation slice |
 | [M1 technical specifications](docs/specs/m1-acceptance.md) | Project Model, Property Registry, DOM Runtime, operation protocol, and milestone gates |
 | [DOM Runtime v0.1](docs/specs/dom-runtime-v0.1.md) | Deterministic rendering, stable node identity, scope mapping, and preview security boundary |
+| [Stage Structure Authoring v0.1](docs/specs/stage-structure-authoring-v0.1.md) | Primitive creation, stable IDs, placement rules, Add Element UX, and current structural boundaries |
 | [Element extractor upstream research](docs/research/element-extractor-upstreams.md) | Pinned upstream study and E0 extraction decisions |
 
 ### Run locally
@@ -121,13 +123,13 @@ No upstream repository is vendored into this repository. Research clones live ou
 
 ## Next vertical slice
 
-The next slice completes structural Stage authoring before Blueprint execution:
+The next slice continues structural Stage authoring before Blueprint execution:
 
-1. create an empty document and open an Add Element palette;
-2. insert Box, Text, Button, Image, and Input nodes through `InsertNode` transactions;
-3. reorder and reparent nodes through hierarchy and Stage gestures;
+1. decide between a true empty document and a permanent page-root sentinel;
+2. reorder and reparent nodes through hierarchy and Stage gestures;
+3. add selection-aware keyboard delete/duplicate with exact undo/redo;
 4. expose operation failures in Problems without corrupting history;
-5. add selection-aware keyboard delete/duplicate and exact undo/redo;
+5. add layout-aware Stage insertion previews and between-sibling drop targets;
 6. then begin `Button Click -> Set Text` in the minimal Blueprint workspace.
 
 This slice closes the remaining M1.2 structural gap while keeping every edit on the Project Model.

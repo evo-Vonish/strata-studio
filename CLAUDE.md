@@ -60,7 +60,8 @@ sources of truth.
   Image, and Input.
 - **M1.2 model-backed Stage core:** deterministic DOM Runtime, sandbox Stage, stable selection,
   model-derived hierarchy, schema-generated Design/Content controls, responsive/state scopes,
-  persistent Project Store, exact undo/redo, and an Agent transaction example.
+  persistent Project Store, exact undo/redo, an Agent transaction example, and a searchable Add
+  Element panel that inserts all five primitives through Before/Inside/After transactions.
 
 The active editor data path is:
 
@@ -75,15 +76,14 @@ Inspector / Stage / Agent intent
 
 ### Active next slice
 
-Finish structural authoring before implementing Blueprint execution:
+Continue structural authoring before implementing Blueprint execution:
 
-1. create/open an empty document;
-2. add an element palette for Box, Text, Button, Image, and Input;
-3. insert nodes through `InsertNode` transactions;
-4. support before/after/inside placement, reparenting, and reordering;
-5. add delete/duplicate keyboard actions with exact history;
-6. route reducer/runtime failures into Problems;
-7. then begin `Button Click -> Set Text` in the minimal Blueprint workspace.
+1. decide whether empty pages use a true empty document or an undeletable page-root sentinel;
+2. support reparenting and reordering through hierarchy and Stage gestures;
+3. add delete/duplicate keyboard actions with exact history;
+4. add Stage placement previews and between-sibling drop targets;
+5. route reducer/runtime failures into Problems;
+6. then begin `Button Click -> Set Text` in the minimal Blueprint workspace.
 
 ## Important implementation boundaries
 
@@ -96,7 +96,9 @@ Finish structural authoring before implementing Blueprint execution:
   Image/media/font resources may still load through declared CSP sources.
 - Imported arbitrary JavaScript/TypeScript cannot always become a clean graph. Preserve unsupported
   source in recognized compound nodes or typed Code Nodes.
-- Problems/diagnostics, structural insertion, and runtime Blueprint execution are not complete yet.
+- Primitive insertion uses opaque, non-recycled type-prefixed UUIDs. The Add UI currently treats
+  only Box as a safe arbitrary-primitive parent.
+- Problems/diagnostics, structural reordering, and runtime Blueprint execution are not complete yet.
 
 ## Repository map
 

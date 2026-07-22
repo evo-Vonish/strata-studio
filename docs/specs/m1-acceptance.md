@@ -32,9 +32,10 @@ M1.1 is complete when:
 ## M1.2 Stage and Property Engine gate
 
 Status: active. The model-backed renderer, stable selection, schema Inspector, scoped property
-editing, local persistence, Agent transaction example, and exact undo/redo are implemented. Empty
-document creation, element insertion UI, reordering gestures, and user-facing operation diagnostics
-remain before this gate is complete.
+editing, local persistence, Agent transaction example, exact undo/redo, and the first Add Element
+flow are implemented. Five primitives can now be searched and inserted Before/Inside/After through
+canonical transactions. Empty-document creation, reordering/reparenting gestures, delete/duplicate,
+and user-facing operation diagnostics remain before this gate is complete.
 
 - create an empty page and insert the five initial elements;
 - select through a stable Strata node ID;

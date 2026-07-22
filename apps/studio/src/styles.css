@@ -1710,6 +1710,246 @@ body.is-resizing-row * {
     monospace;
 }
 
+.add-element-panel .panel-heading > button {
+  width: 25px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 4px;
+  color: #7c8793;
+  background: transparent;
+  cursor: pointer;
+}
+
+.add-element-panel .panel-heading > button:hover {
+  color: #e6e9ed;
+  background: #282e36;
+}
+
+.add-element-search {
+  flex: 0 0 auto;
+}
+
+.insertion-target {
+  margin: 0 8px 8px;
+  padding: 9px;
+  display: grid;
+  gap: 5px;
+  border: 1px solid #2a323b;
+  border-radius: 6px;
+  background: linear-gradient(145deg, #171c22, #11151a);
+}
+
+.insertion-target > span,
+.element-palette-heading > span {
+  color: #687480;
+  font:
+    7px "DM Mono",
+    monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.insertion-target > strong {
+  overflow: hidden;
+  color: #d8dde4;
+  font-size: 9px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.insertion-target > small {
+  color: #707b87;
+  font-size: 8px;
+  line-height: 1.45;
+}
+
+.insertion-target > fieldset {
+  margin: 3px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 3px;
+  border: 0;
+}
+
+.insertion-target button {
+  height: 24px;
+  border: 1px solid #2d3540;
+  border-radius: 4px;
+  color: #77828e;
+  background: #0d1115;
+  font-size: 8px;
+  cursor: pointer;
+}
+
+.insertion-target button:hover:not(:disabled) {
+  color: #d9dee5;
+  border-color: #46515d;
+}
+
+.insertion-target button.active {
+  color: #10150b;
+  border-color: var(--focus);
+  background: var(--focus);
+  font-weight: 700;
+}
+
+.insertion-target button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.element-palette-heading {
+  height: 27px;
+  padding: 0 10px;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid #20262d;
+  border-bottom: 1px solid #20262d;
+  background: #101419;
+}
+
+.add-element-error {
+  margin: 0 8px 8px;
+  padding: 8px;
+  display: grid;
+  gap: 3px;
+  border: 1px solid #70404a;
+  border-radius: 5px;
+  color: #d68c98;
+  background: rgba(112, 46, 58, 0.16);
+  font-size: 8px;
+}
+
+.add-element-error strong {
+  color: #f0b2bb;
+  font-size: 8px;
+}
+
+.element-palette-heading small {
+  min-width: 17px;
+  padding: 2px 5px;
+  border-radius: 8px;
+  color: #7e8995;
+  background: #232a32;
+  font-size: 7px;
+  text-align: center;
+}
+
+.element-palette-list {
+  min-height: 0;
+  padding: 6px;
+  display: grid;
+  flex: 1;
+  align-content: start;
+  gap: 4px;
+  overflow: auto;
+}
+
+.element-palette-list > button {
+  min-height: 54px;
+  padding: 7px;
+  display: grid;
+  grid-template-columns: 33px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: #8e98a4;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.element-palette-list > button:hover,
+.element-palette-list > button:focus-visible {
+  color: #e6e9ee;
+  border-color: #35404b;
+  outline: 0;
+  background: #1b2128;
+}
+
+.element-palette-list > button > span {
+  width: 33px;
+  height: 33px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #343e49;
+  border-radius: 6px;
+  color: var(--focus);
+  background: #11161a;
+}
+
+.element-palette-list > button > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.element-palette-list strong {
+  color: inherit;
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.element-palette-list small {
+  overflow: hidden;
+  color: #66717d;
+  font-size: 7px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.element-palette-list code {
+  color: #596571;
+  font:
+    7px "DM Mono",
+    monospace;
+}
+
+.element-palette-empty {
+  min-height: 150px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 7px;
+  color: #596571;
+  text-align: center;
+}
+
+.element-palette-empty strong {
+  color: #9da6b0;
+}
+
+.element-palette-empty small {
+  white-space: normal;
+}
+
+.add-element-footer {
+  height: 31px;
+  padding: 0 9px;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid #252c34;
+  color: #66717d;
+  background: #101419;
+  font-size: 7px;
+}
+
+.add-element-footer code {
+  color: #7d8862;
+  font:
+    7px "DM Mono",
+    monospace;
+}
+
 .block-library,
 .asset-browser,
 .global-search {

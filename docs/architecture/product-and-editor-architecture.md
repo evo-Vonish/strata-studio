@@ -11,10 +11,12 @@ property-editing core is also current: the Project Model now drives a determinis
 Runtime, stable Stage selection, the hierarchy, schema-generated Inspector controls, responsive and
 state scopes, persistence, and exact transaction undo/redo.
 
-M1.2 is not yet complete. Its remaining structural authoring slice is an empty-document flow, Add
-Element palette, `InsertNode` transactions, layout-aware before/after/inside placement, hierarchy and
-Stage reordering/reparenting, delete/duplicate commands, and user-facing Problems diagnostics. The
-minimal Blueprint runtime begins only after this structural loop is reliable.
+M1.2 is not yet complete. Its first structural authoring slice is current: the Registry-backed Add
+Element panel creates five primitives through `InsertNode`, supports conservative Before/Inside/
+After placement, and participates in exact Undo/Redo. Remaining work is the empty-document policy,
+layout-aware Stage placement feedback, hierarchy and Stage reordering/reparenting, delete/duplicate
+commands, and user-facing Problems diagnostics. The minimal Blueprint runtime begins only after this
+structural loop is reliable.
 
 ## Product statement
 

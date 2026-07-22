@@ -67,6 +67,13 @@ import {
   useRef,
   useState,
 } from "react";
+import { AddElementPanel, type InsertableElementType } from "./add-element-panel";
+import { createElementNode } from "./element-factory";
+import {
+  createElementId,
+  type InsertionPlacement,
+  resolveInsertionTarget,
+} from "./element-insertion";
 import { ModelInspector } from "./model-inspector";
 import {
   createStudioProject,
@@ -383,11 +390,13 @@ function NavigatorPanel({
   tool,
   project,
   selectedNodeId,
+  onAdd,
   onSelect,
 }: {
   tool: ActivityTool;
   project: StrataProject;
   selectedNodeId: string | null;
+  onAdd: () => void;
   onSelect: (nodeId: string) => void;
 }) {
   const title = {
@@ -404,7 +413,7 @@ function NavigatorPanel({
       <div className="panel-heading">
         <span>{title}</span>
         <div>
-          <IconButton icon={Plus} label="Add" />
+          <IconButton icon={Plus} label="Add element" onClick={onAdd} />
           <IconButton icon={MoreHorizontal} label="More actions" />
         </div>
       </div>
@@ -723,6 +732,7 @@ export function App() {
   const runtimeCleanupRef = useRef<(() => void) | null>(null);
   const selectModeRef = useRef(true);
   const paletteInputRef = useRef<HTMLInputElement>(null);
+  const paletteReturnFocusRef = useRef<HTMLElement | null>(null);
   const {
     project,
     applyOperations,
@@ -755,8 +765,10 @@ export function App() {
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
   const [bottomOpen, setBottomOpen] = useState(true);
+  const [addElementOpen, setAddElementOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
+  const [paletteIndex, setPaletteIndex] = useState(0);
   const viewportSignature = `${device}:${zoom}`;
   const [operations, setOperations] = useState<OperationItem[]>([
     {
@@ -932,6 +944,44 @@ export function App() {
     [addOperation, applyOperations],
   );
 
+  const insertElement = useCallback(
+    (type: InsertableElementType, placement: InsertionPlacement) => {
+      const document = project.documents[project.activeDocumentId];
+      if (!document) return;
+      try {
+        const target = resolveInsertionTarget(project, selectedNodeId, placement, type);
+        const nodeId = createElementId(document, type);
+        const node = createElementNode({ type, nodeId, parentId: target.parentId });
+        applyModelOperations(
+          [
+            {
+              type: "InsertNode",
+              source: "human",
+              documentId: document.id,
+              node,
+              descendants: [],
+              parentId: target.parentId,
+              index: target.index,
+            },
+          ],
+          `Insert ${type}`,
+        );
+        setSelectedNodeId(nodeId);
+        setSelected(null);
+        setHovered(null);
+        setWorkspaceMode("stage");
+        setActiveTool("hierarchy");
+        setAddElementOpen(false);
+        setError(null);
+      } catch (caught) {
+        const message = caught instanceof Error ? caught.message : `Could not insert ${type}`;
+        setError(message);
+        addOperation("Insert failed", message, "system");
+      }
+    },
+    [addOperation, applyModelOperations, project, selectedNodeId],
+  );
+
   const undo = useCallback(() => {
     const label = undoProject();
     if (label) addOperation("Undo", label, "system");
@@ -992,6 +1042,30 @@ export function App() {
     if (mode === "stage" && activeTool === "blocks") setActiveTool("hierarchy");
   };
 
+  const openAddElement = useCallback(() => {
+    setWorkspaceMode("stage");
+    setActiveTool("hierarchy");
+    setLeftOpen(true);
+    setError(null);
+    setAddElementOpen(true);
+  }, []);
+
+  const openCommandPalette = useCallback(() => {
+    paletteReturnFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setPaletteOpen(true);
+    setPaletteIndex(0);
+  }, []);
+
+  const closeCommandPalette = useCallback(() => {
+    const returnTarget = paletteReturnFocusRef.current;
+    setPaletteOpen(false);
+    setPaletteQuery("");
+    window.requestAnimationFrame(() => {
+      if (returnTarget?.isConnected) returnTarget.focus();
+    });
+  }, []);
+
   const resetLayout = useCallback(() => {
     setLeftWidth(248);
     setRightWidth(334);
@@ -1005,9 +1079,13 @@ export function App() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const modifier = event.metaKey || event.ctrlKey;
+      const target = event.target;
+      const isEditing =
+        target instanceof HTMLElement &&
+        (target.matches("input, textarea, select") || target.isContentEditable);
       if (modifier && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setPaletteOpen(true);
+        openCommandPalette();
       } else if (modifier && event.key.toLowerCase() === "b") {
         event.preventDefault();
         setLeftOpen((value) => !value);
@@ -1020,16 +1098,17 @@ export function App() {
       } else if (modifier && event.key.toLowerCase() === "z") {
         event.preventDefault();
         undo();
-      } else if (event.key.toLowerCase() === "p" && !modifier && !event.altKey) {
+      } else if (event.key.toLowerCase() === "p" && !modifier && !event.altKey && !isEditing) {
         setSelectMode((value) => !value);
       } else if (event.key === "Escape") {
-        setPaletteOpen(false);
+        if (paletteOpen) closeCommandPalette();
+        else setAddElementOpen(false);
         setHovered(null);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [redo, undo]);
+  }, [closeCommandPalette, openCommandPalette, paletteOpen, redo, undo]);
 
   const startResize = (target: ResizeTarget, event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -1117,6 +1196,12 @@ export function App() {
 
   const paletteCommands = [
     {
+      label: "Add element",
+      hint: "",
+      icon: Plus,
+      action: openAddElement,
+    },
+    {
       label: "Toggle element selector",
       hint: "P",
       icon: MousePointer2,
@@ -1154,6 +1239,14 @@ export function App() {
     },
     { label: "Reset workspace layout", hint: "", icon: RefreshCw, action: resetLayout },
   ].filter((item) => item.label.toLowerCase().includes(paletteQuery.toLowerCase()));
+
+  const runPaletteCommand = (index: number) => {
+    const item = paletteCommands[index];
+    if (!item) return;
+    setPaletteOpen(false);
+    setPaletteQuery("");
+    item.action();
+  };
 
   const shellStyle = {
     "--navigator-width": leftOpen ? `${leftWidth}px` : "0px",
@@ -1220,7 +1313,7 @@ export function App() {
         </div>
 
         <div className="title-actions">
-          <button className="command-trigger" type="button" onClick={() => setPaletteOpen(true)}>
+          <button className="command-trigger" type="button" onClick={openCommandPalette}>
             <Search size={13} />
             <span>Command</span>
             <kbd>⌘ K</kbd>
@@ -1243,6 +1336,7 @@ export function App() {
               title="Hierarchy"
               onClick={() => {
                 setActiveTool("hierarchy");
+                setAddElementOpen(false);
                 setLeftOpen(true);
               }}
             >
@@ -1254,6 +1348,7 @@ export function App() {
               title="Blocks"
               onClick={() => {
                 setActiveTool("blocks");
+                setAddElementOpen(false);
                 setLeftOpen(true);
                 setWorkspaceMode("blueprint");
               }}
@@ -1266,6 +1361,7 @@ export function App() {
               title="Assets"
               onClick={() => {
                 setActiveTool("assets");
+                setAddElementOpen(false);
                 setLeftOpen(true);
               }}
             >
@@ -1277,6 +1373,7 @@ export function App() {
               title="Search"
               onClick={() => {
                 setActiveTool("search");
+                setAddElementOpen(false);
                 setLeftOpen(true);
               }}
             >
@@ -1294,12 +1391,22 @@ export function App() {
           </div>
         </nav>
 
-        <NavigatorPanel
-          tool={activeTool}
-          project={project}
-          selectedNodeId={selectedNodeId}
-          onSelect={selectFromTree}
-        />
+        {addElementOpen ? (
+          <AddElementPanel
+            selectedNode={modelNode}
+            error={error}
+            onClose={() => setAddElementOpen(false)}
+            onInsert={insertElement}
+          />
+        ) : (
+          <NavigatorPanel
+            tool={activeTool}
+            project={project}
+            selectedNodeId={selectedNodeId}
+            onAdd={openAddElement}
+            onSelect={selectFromTree}
+          />
+        )}
         <div
           className="panel-resizer vertical left-resizer"
           onPointerDown={(event) => startResize("left", event)}
@@ -2133,7 +2240,7 @@ export function App() {
           aria-modal="true"
           aria-label="Command palette"
           onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setPaletteOpen(false);
+            if (event.target === event.currentTarget) closeCommandPalette();
           }}
         >
           <section className="command-palette">
@@ -2142,26 +2249,47 @@ export function App() {
               <input
                 ref={paletteInputRef}
                 aria-label="Search commands"
+                role="combobox"
+                aria-expanded="true"
+                aria-controls="command-results"
+                aria-activedescendant={
+                  paletteCommands[paletteIndex] ? `command-result-${paletteIndex}` : undefined
+                }
                 value={paletteQuery}
-                onChange={(event) => setPaletteQuery(event.currentTarget.value)}
+                onChange={(event) => {
+                  setPaletteQuery(event.currentTarget.value);
+                  setPaletteIndex(0);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    setPaletteIndex((index) =>
+                      Math.min(index + 1, Math.max(0, paletteCommands.length - 1)),
+                    );
+                  } else if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    setPaletteIndex((index) => Math.max(0, index - 1));
+                  } else if (event.key === "Enter") {
+                    event.preventDefault();
+                    runPaletteCommand(paletteIndex);
+                  }
+                }}
                 placeholder="Type a command or search…"
               />
               <kbd>Esc</kbd>
             </div>
             <div className="palette-label">Commands</div>
-            <div className="palette-results">
+            <div className="palette-results" id="command-results">
               {paletteCommands.map((item, index) => {
                 const Icon = item.icon;
                 return (
                   <button
-                    className={index === 0 ? "active" : ""}
+                    id={`command-result-${index}`}
+                    className={index === paletteIndex ? "active" : ""}
                     type="button"
                     key={item.label}
-                    onClick={() => {
-                      item.action();
-                      setPaletteOpen(false);
-                      setPaletteQuery("");
-                    }}
+                    onMouseEnter={() => setPaletteIndex(index)}
+                    onClick={() => runPaletteCommand(index)}
                   >
                     <Icon size={14} />
                     <span>{item.label}</span>

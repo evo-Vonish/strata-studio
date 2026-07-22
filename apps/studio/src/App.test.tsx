@@ -1,3 +1,4 @@
+import type { StrataDocument, StrataProject } from "@strata/project-model";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -11,11 +12,29 @@ function propertyField(container: Element, id: string): HTMLElement {
   return field;
 }
 
-function storedWidth(): number | undefined {
+function storedProject(): StrataProject | null {
   const serialized = window.localStorage.getItem("strata-studio.project.v0.1");
-  if (!serialized) return undefined;
-  const project = JSON.parse(serialized);
-  const rules = project.documents.home.nodes["primary-action"].styleRules as Array<{
+  return serialized ? (JSON.parse(serialized) as StrataProject) : null;
+}
+
+function requiredStoredProject(): StrataProject {
+  const project = storedProject();
+  if (!project) throw new Error("Stored project is missing");
+  return project;
+}
+
+function homeDocument(project: StrataProject): StrataDocument {
+  const document = project.documents.home;
+  if (!document) throw new Error("Home document is missing");
+  return document;
+}
+
+function storedWidth(): number | undefined {
+  const project = storedProject();
+  if (!project) return undefined;
+  const primaryAction = homeDocument(project).nodes["primary-action"];
+  if (!primaryAction) return undefined;
+  const rules = primaryAction.styleRules as Array<{
     scope: Record<string, string>;
     properties: Record<string, { kind: string; value?: number }>;
   }>;
@@ -109,5 +128,71 @@ describe("Strata Studio model integration", () => {
     const click = new MouseEvent("click", { bubbles: true, cancelable: true });
     expect(link.dispatchEvent(click)).toBe(false);
     expect(click.defaultPrevented).toBe(true);
+  });
+
+  it("inserts a primitive through the canonical model and restores it with redo", async () => {
+    const add = container.querySelector<HTMLButtonElement>('button[aria-label="Add element"]');
+    if (!add) throw new Error("Add element action is missing");
+    await act(async () => add.click());
+
+    const inside = [
+      ...container.querySelectorAll<HTMLButtonElement>(".insertion-target button"),
+    ].find((button) => button.textContent === "Inside");
+    const insertText = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Insert Text"]',
+    );
+    if (!inside || !insertText) throw new Error("Element palette is incomplete");
+    expect(inside.disabled).toBe(true);
+
+    await act(async () => insertText.click());
+    const insertedProject = requiredStoredProject();
+    const insertedDocument = homeDocument(insertedProject);
+    const inserted = Object.values(insertedDocument.nodes).find(
+      (node) => node.type === "Text" && node.id.startsWith("text-"),
+    );
+    if (!inserted) throw new Error("Inserted Text node is missing");
+    expect(inserted.parentId).toBe("hero");
+    expect(insertedDocument.nodes.hero?.children.at(-1)).toBe(inserted.id);
+    expect(container.textContent).toContain("12 nodes · compiled stage");
+    expect(container.textContent).toContain(`Text · ${inserted.id}`);
+    expect(container.querySelector<HTMLIFrameElement>(".model-stage-frame")?.srcdoc).toContain(
+      `data-strata-node-id="${inserted.id}"`,
+    );
+
+    const undo = container.querySelector<HTMLButtonElement>('button[aria-label="Undo"]');
+    const redo = container.querySelector<HTMLButtonElement>('button[aria-label="Redo"]');
+    if (!undo || !redo) throw new Error("History controls are missing");
+    await act(async () => undo.click());
+    expect(requiredStoredProject().documents.home?.nodes[inserted.id]).toBeUndefined();
+    expect(container.textContent).toContain("11 nodes · compiled stage");
+
+    await act(async () => redo.click());
+    expect(requiredStoredProject().documents.home?.nodes[inserted.id]).toEqual(inserted);
+    expect(requiredStoredProject().documents.home?.nodes.hero?.children.at(-1)).toBe(inserted.id);
+  });
+
+  it("opens Add Element from the keyboard command palette without hijacking text input", async () => {
+    await act(async () =>
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true }),
+      ),
+    );
+    const commandInput = container.querySelector<HTMLInputElement>(
+      'input[aria-label="Search commands"]',
+    );
+    if (!commandInput) throw new Error("Command palette did not open");
+    await act(async () =>
+      commandInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })),
+    );
+    const search = container.querySelector<HTMLInputElement>('input[aria-label="Search elements"]');
+    const select = container.querySelector<HTMLButtonElement>('button[aria-label="Select (P)"]');
+    if (!search || !select) throw new Error("Add Element panel did not open");
+    expect(select.classList.contains("active")).toBe(true);
+
+    search.focus();
+    await act(async () =>
+      search.dispatchEvent(new KeyboardEvent("keydown", { key: "p", bubbles: true })),
+    );
+    expect(select.classList.contains("active")).toBe(true);
   });
 });

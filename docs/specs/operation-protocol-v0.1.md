@@ -40,7 +40,9 @@ Payload includes the complete new node, target parent or root placement, and ind
 rejects duplicate IDs, nonexistent parents, incompatible parent/child relationships known to the
 core, and out-of-range indices.
 
-Its inverse is `RemoveNode` with the exact inserted subtree snapshot.
+Its inverse is `RemoveNode` for the inserted root ID. If that inverse is applied, `RemoveNode`
+captures the then-current subtree for its own inverse; editor redo normally replays the original
+forward `InsertNode` snapshot.
 
 ### RemoveNode
 
