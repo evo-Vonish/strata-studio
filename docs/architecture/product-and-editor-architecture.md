@@ -30,9 +30,14 @@ reducer rejects deletion with surviving typed node references, hierarchy preflig
 supported authored DOM IDREFs, and duplicate gives valid authored DOM IDs unique `--copy` values
 while rewriting a conservative set of internal HTML/ARIA IDREFs. Problems locates blocked commands
 at each surviving reference source. It deliberately has no force-delete and preserves opaque
-references for later typed support. Remaining work is imported-root migration,
-cross-document/property-level diagnostic location, and later layout-aware refinement. The minimal
-Blueprint runtime begins only after this structural loop is reliable.
+references for later typed support. [Imported Page-root Migration v0.1](../specs/imported-page-root-migration-v0.1.md)
+is now current: an invalid imported first root is a persistent model-derived Problem, not a
+silent load-time wrapper. User-confirmed Repair inserts one neutral `div { display: contents }`
+Box sentinel and reparents the former roots through an exact reversible import transaction while
+preserving IDs, opaque fields, locks, and references. It explicitly warns that DOM nesting may
+change imported CSS selector fidelity; a valid first Box and legacy root suffix are not rewritten.
+Remaining work is cross-document/property-level diagnostic location and later layout-aware
+refinement. The minimal Blueprint runtime begins only after this structural loop is reliable.
 
 ## Product statement
 

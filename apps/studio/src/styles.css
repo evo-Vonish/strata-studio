@@ -2933,7 +2933,7 @@ body.is-resizing-row * {
   min-height: 39px;
   padding: 5px 8px;
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) 30px;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
   align-items: center;
   border-bottom: 1px solid rgba(39, 46, 54, 0.5);
 }
@@ -2997,10 +2997,17 @@ body.is-resizing-row * {
   font-style: normal;
 }
 
-.problem-locate {
+.problem-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.problem-locate,
+.problem-repair {
   width: 26px;
   height: 25px;
-  display: grid;
+  display: inline-grid;
   place-items: center;
   border: 0;
   border-radius: 4px;
@@ -3009,12 +3016,28 @@ body.is-resizing-row * {
   cursor: pointer;
 }
 
-.problem-locate:hover:not(:disabled) {
+.problem-repair {
+  width: auto;
+  padding: 0 7px;
+  grid-auto-flow: column;
+  gap: 4px;
+  color: #b9ff66;
+  background: rgba(185, 255, 102, 0.08);
+}
+
+.problem-repair span {
+  color: inherit;
+  font-size: 8px;
+}
+
+.problem-locate:hover:not(:disabled),
+.problem-repair:hover:not(:disabled) {
   color: #d6dde5;
   background: #252c34;
 }
 
-.problem-locate:disabled {
+.problem-locate:disabled,
+.problem-repair:disabled {
   opacity: 0.28;
   cursor: default;
 }

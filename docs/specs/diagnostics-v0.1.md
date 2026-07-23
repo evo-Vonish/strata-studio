@@ -2,7 +2,8 @@
 
 Last updated: 2026-07-23
 
-Status: implemented M1.2 diagnostics and Reference Integrity Problems slices
+Status: implemented M1.2 diagnostics, Reference Integrity Problems, and Imported Page-root
+Migration slices
 
 ## Objective
 
@@ -13,8 +14,9 @@ project data, a second validation store, or an undoable operation.
 This slice surfaces deterministic DOM Runtime warnings and failures at operation and structure
 boundaries. Reference Integrity v0.1 adds the required blocked-command behavior: external typed
 node references, invalid authored DOM IDs, and ambiguous authored DOM IDs must become actionable
-Problems records. Imported-root migration, cross-document navigation, and property-level Inspector
-focus remain outside this slice.
+Problems records. Imported Page-root Migration v0.1 adds a model-derived, actionable Problem for
+documents whose first root cannot act as the Studio Box sentinel. Cross-document navigation and
+property-level Inspector focus remain outside this slice.
 
 ## `StudioDiagnostic` contract
 
@@ -110,8 +112,8 @@ belongs to another document, Locate is disabled and the row says that the locati
 the Studio never silently substitutes the page root. Property-level focus and cross-document
 navigation are deferred.
 
-The zero state says that the active project has no current runtime warnings or session failures. It
-does not claim to prove every future validation domain.
+The zero state says that the active project has no current model-derived, runtime, or session
+diagnostics. It does not claim to prove every future validation domain.
 
 ### Reference Integrity command failures
 
@@ -121,6 +123,22 @@ not the deletion target or a substituted page root; `relatedNodeId` labels the t
 `EXTERNAL_NODE_REFERENCE`, `EXTERNAL_DOM_ID_REFERENCE`, `INVALID_AUTHORED_DOM_ID`, and
 `DUPLICATE_AUTHORED_DOM_ID` are session-only error records: no project or history entry exists for
 the rejected command. A force-delete control is intentionally absent.
+
+### Imported page-root migration
+
+`PAGE_ROOT_MIGRATION_REQUIRED` is a `source: "structure"` diagnostic derived from the active
+Project Model whenever `rootNodeIds[0]` is not a valid element Box with a Property Registry Box
+tag. It is not a session failure: it remains after unrelated successful operations and resolves
+only when the model receives a valid page root. Its primary location is the original imported first
+root, so Locate continues to select source material rather than a synthetic fallback.
+
+The row exposes **Repair imported page structure** when Studio can produce the safe command
+specified by [Imported Page-root Migration v0.1](imported-page-root-migration-v0.1.md).
+Repair itself is one ordinary, exactly undoable import transaction, not a Problems-only mutation.
+Before applying it, the UI states that it preserves imported node identity and fields but adds DOM
+nesting that can affect CSS selector and visual fidelity. A cancelled or failed Repair leaves the
+derived diagnostic, project, selection, and history unchanged. A successful Repair removes the
+diagnostic because the model now satisfies the sentinel policy.
 
 ## Compile once, then build the inert Stage shell
 
@@ -138,7 +156,6 @@ of the HTML/CSS passed to the shell; Problems must not weaken the preview bounda
 
 ## Deferred scope
 
-- explicit migration or diagnostics for imported documents without a valid Box page root;
 - cross-document diagnostic navigation and property-specific Inspector focus;
 - persistent/dismissible diagnostics, Console aggregation, and diagnostic export;
 - compiler exception recovery/error-boundary UX beyond model-valid runtime warnings;

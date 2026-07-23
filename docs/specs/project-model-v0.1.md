@@ -191,6 +191,9 @@ types, and generated source belong to the Program Model checkpoint.
 - Migrations are pure functions from one validated version to the next.
 - Unknown DOM attributes and style declarations belong in normal property maps or `passthrough`,
   never in transient editor state.
+- The generic model intentionally does not require a Box first root. Studio's imported page-root
+  assessment and explicit `source: "import"` repair transaction are editor policy over this
+  multi-root shape; see [Imported Page-root Migration v0.1](imported-page-root-migration-v0.1.md).
 
 ## Error behavior
 

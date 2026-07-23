@@ -8,6 +8,7 @@ import {
   getElementStructureCapabilities,
   isElementStructureIntegrityError,
 } from "./element-structure";
+import { PageRootMigrationError } from "./page-root-migration";
 
 function createStructureProject(): StrataProject {
   const page = createElementNode({ type: "Box", nodeId: "page", parentId: null });
@@ -83,6 +84,18 @@ const unavailable = {
 };
 
 describe("element structure commands", () => {
+  it("disables and explicitly blocks hierarchy commands until an imported root is repaired", () => {
+    const project = createStructureProject();
+    const document = project.documents.document;
+    if (!document?.nodes.page) throw new Error("The structure fixture page is missing");
+    document.nodes.page.type = "Text";
+
+    expect(getElementStructureCapabilities(project, "beta")).toEqual(unavailable);
+    expect(() => createMoveElementCommand(project, "beta", "up")).toThrow(PageRootMigrationError);
+    expect(() => createDeleteElementCommand(project, "beta")).toThrow(PageRootMigrationError);
+    expect(() => createDuplicateElementCommand(project, "beta")).toThrow(PageRootMigrationError);
+  });
+
   it("protects the page sentinel and computes legacy-root and ordinary-node capabilities", () => {
     const project = createStructureProject();
 

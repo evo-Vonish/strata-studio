@@ -65,6 +65,23 @@ function ready(
 }
 
 describe("Stage placement planning", () => {
+  it("blocks every Stage drop with a migration-required reason until the page root is repaired", () => {
+    const project = createPlacementProject();
+    const document = project.documents.document;
+    if (!document?.nodes.page) throw new Error("The placement fixture page is missing");
+    document.nodes.page.type = "Text";
+
+    expect(planStagePlacement(project, "a", "b", "before")).toEqual({
+      status: "unavailable",
+      reason: "page-root-migration-required",
+    });
+    expect(getStagePlacementCapabilities(project, "a", "b")).toEqual({
+      before: { available: false, noOp: false, reason: "page-root-migration-required" },
+      inside: { available: false, noOp: false, reason: "page-root-migration-required" },
+      after: { available: false, noOp: false, reason: "page-root-migration-required" },
+    });
+  });
+
   it("maps target edge bands and safe container centers to semantic placements", () => {
     const rect = { top: 100, bottom: 200, height: 100 };
     expect(stagePlacementFromPoint(true, 110, rect)).toBe("before");

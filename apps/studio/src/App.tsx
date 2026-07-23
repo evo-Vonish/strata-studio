@@ -63,6 +63,7 @@ import {
   Type,
   Undo2,
   Workflow,
+  Wrench,
   X,
   ZoomIn,
   ZoomOut,
@@ -96,6 +97,7 @@ import {
   type StructureMoveDirection,
 } from "./element-structure";
 import { ModelInspector } from "./model-inspector";
+import { analyzePageRoot, createPageRootMigrationCommand } from "./page-root-migration";
 import {
   planStagePlacement,
   type StagePlacement,
@@ -371,6 +373,7 @@ const stagePlacementReasonLabels: Record<StagePlacementRejectionReason, string> 
   "unknown-dragged-node": "the source is no longer available",
   "unknown-hover-target": "the target is no longer available",
   "dragged-node-locked": "the source is locked",
+  "page-root-migration-required": "the imported page root must be repaired first",
   "page-root-sentinel": "the page root is protected",
   "target-in-dragged-subtree": "a node cannot move into its own subtree",
   "root-sibling-placement": "Stage moves cannot create page-level siblings",
@@ -597,6 +600,7 @@ function NavigatorPanel({
   project,
   selectedNodeId,
   structure,
+  canAdd,
   onAdd,
   onSelect,
 }: {
@@ -604,6 +608,7 @@ function NavigatorPanel({
   project: StrataProject;
   selectedNodeId: string | null;
   structure?: HierarchyCommands | undefined;
+  canAdd: boolean;
   onAdd: () => void;
   onSelect: (nodeId: string) => void;
 }) {
@@ -621,7 +626,7 @@ function NavigatorPanel({
       <div className="panel-heading">
         <span>{title}</span>
         <div>
-          <IconButton icon={Plus} label="Add element" onClick={onAdd} />
+          <IconButton icon={Plus} label="Add element" disabled={!canAdd} onClick={onAdd} />
           <IconButton icon={MoreHorizontal} label="More actions" />
         </div>
       </div>
@@ -1046,6 +1051,12 @@ export function App() {
     },
   ]);
   const modelNode = findSelectedNode(project, selectedNodeId);
+  const activeDocument = project.documents[project.activeDocumentId];
+  const pageRootAssessment = useMemo(
+    () => (activeDocument ? analyzePageRoot(activeDocument) : null),
+    [activeDocument],
+  );
+  const pageRootReady = pageRootAssessment?.status === "compatible";
   const stageCompilation = useMemo(
     () => compileDocument(project, project.activeDocumentId),
     [project],
@@ -1059,9 +1070,24 @@ export function App() {
     () => compileWarningsToDiagnostics(project.activeDocumentId, stageCompilation.warnings),
     [project.activeDocumentId, stageCompilation.warnings],
   );
+  const pageRootDiagnostics = useMemo(() => {
+    if (!pageRootAssessment || pageRootAssessment.status === "compatible") return [];
+    const rootCount = activeDocument?.rootNodeIds.length ?? 0;
+    return [
+      createStudioDiagnostic({
+        severity: "error",
+        source: "structure",
+        code: pageRootAssessment.code,
+        message: `${pageRootAssessment.message}. Repair adds a neutral Box around ${rootCount} imported root${rootCount === 1 ? "" : "s"} and may affect DOM nesting or external CSS selectors.`,
+        documentId: pageRootAssessment.documentId,
+        ...(pageRootAssessment.rootNodeId ? { nodeId: pageRootAssessment.rootNodeId } : {}),
+        property: "rootNodeIds[0]",
+      }),
+    ];
+  }, [activeDocument?.rootNodeIds.length, pageRootAssessment]);
   const diagnostics = useMemo(
-    () => mergeDiagnostics(sessionDiagnostics, runtimeDiagnostics),
-    [runtimeDiagnostics, sessionDiagnostics],
+    () => mergeDiagnostics(pageRootDiagnostics, sessionDiagnostics, runtimeDiagnostics),
+    [pageRootDiagnostics, runtimeDiagnostics, sessionDiagnostics],
   );
   const problemErrorCount = diagnostics.filter(
     (diagnostic) => diagnostic.severity === "error",
@@ -1164,6 +1190,27 @@ export function App() {
     const document = project.documents[project.activeDocumentId];
     setSelectedNodeId(document?.rootNodeIds[0] ?? null);
   }, [modelNode, project]);
+
+  const startStageReorder = useCallback(() => {
+    if (!pageRootReady) {
+      const message =
+        pageRootAssessment?.status === "repair-required"
+          ? pageRootAssessment.message
+          : "The imported page root must be repaired before reordering";
+      stageDragCancelRef.current();
+      setStageTool("select");
+      setStageDropPreview(null);
+      setBottomTab("problems");
+      setBottomOpen(true);
+      setError(message);
+      setStageAnnouncement(`Stage reorder blocked: ${message}. Open Problems to repair it.`);
+      return;
+    }
+    setStageTool("move");
+    setStageAnnouncement(
+      `Reorder “${modelNode?.editor.name ?? modelNode?.type ?? "selection"}”: drag it to a highlighted placement.`,
+    );
+  }, [modelNode, pageRootAssessment, pageRootReady]);
 
   const connectRuntimeFrame = useCallback(() => {
     runtimeCleanupRef.current?.();
@@ -1291,6 +1338,12 @@ export function App() {
         isPageRoot(activeDocument, sourceNodeId)
       )
         return;
+      if (analyzePageRoot(activeDocument).status === "repair-required") {
+        setStageTool("select");
+        setStageDropPreview(null);
+        setStageAnnouncement("Stage reorder blocked: repair the imported page root first.");
+        return;
+      }
 
       event.preventDefault();
       captureElement(sourceElement, { quiet: true });
@@ -1429,6 +1482,14 @@ export function App() {
     setStageDropPreview(null);
   }, [workspaceMode]);
 
+  useEffect(() => {
+    if (pageRootAssessment?.status !== "repair-required") return;
+    stageDragCancelRef.current();
+    setStageTool("select");
+    setStageDropPreview(null);
+    setAddElementOpen(false);
+  }, [pageRootAssessment]);
+
   const syncOverlay = useCallback(() => {
     const target = stageCanHover && hovered ? hovered : selected;
     if (!target?.isConnected || workspaceMode !== "stage") {
@@ -1511,6 +1572,49 @@ export function App() {
     },
     [addOperation, applyOperations, reportSessionDiagnostics],
   );
+
+  const repairImportedPageRoot = useCallback(() => {
+    const current = projectRef.current;
+    const document = current.documents[current.activeDocumentId];
+    if (!document) return;
+    const assessment = analyzePageRoot(document);
+    if (assessment.status === "compatible") return;
+    try {
+      const command = createPageRootMigrationCommand(current);
+      if (command.operations.length === 0) return;
+      const selectionAfter =
+        command.selectionNodeId && document.nodes[command.selectionNodeId]
+          ? command.selectionNodeId
+          : null;
+      const applied = applyModelOperations(
+        [...command.operations],
+        "Repair imported page structure",
+        {
+          history: {
+            selectionBefore: selectedNodeId,
+            selectionAfter,
+          },
+        },
+      );
+      if (!applied) return;
+      setSelectedNodeId(selectionAfter);
+      setSelected(null);
+      setHovered(null);
+      setWorkspaceMode("stage");
+      setActiveTool("hierarchy");
+      setAddElementOpen(false);
+      setError(null);
+    } catch (caught) {
+      reportSessionDiagnostics(
+        operationErrorToDiagnostics(caught, {
+          documentId: current.activeDocumentId,
+          ...(assessment.rootNodeId ? { nodeId: assessment.rootNodeId } : {}),
+          operationType: "PageRootMigration",
+        }),
+        "Page-root repair failed",
+      );
+    }
+  }, [applyModelOperations, reportSessionDiagnostics, selectedNodeId]);
 
   const commitStagePlacement = useCallback(
     (sourceNodeId: string, targetNodeId: string, placement: StagePlacement) => {
@@ -1871,12 +1975,18 @@ export function App() {
   };
 
   const openAddElement = useCallback(() => {
+    if (pageRootAssessment?.status === "repair-required") {
+      setBottomTab("problems");
+      setBottomOpen(true);
+      setError(pageRootAssessment.message);
+      return;
+    }
     setWorkspaceMode("stage");
     setActiveTool("hierarchy");
     setLeftOpen(true);
     setError(null);
     setAddElementOpen(true);
-  }, []);
+  }, [pageRootAssessment]);
 
   const openCommandPalette = useCallback(() => {
     paletteReturnFocusRef.current =
@@ -2013,10 +2123,7 @@ export function App() {
         !isEditing &&
         !event.isComposing
       ) {
-        setStageTool("move");
-        setStageAnnouncement(
-          `Reorder “${modelNode?.editor.name ?? modelNode?.type ?? "selection"}”: drag it to a highlighted placement.`,
-        );
+        startStageReorder();
       } else if (event.key === "Escape") {
         stageDragCancelRef.current();
         if (stageTool === "move") {
@@ -2039,7 +2146,7 @@ export function App() {
     openCommandPalette,
     paletteOpen,
     redo,
-    modelNode,
+    startStageReorder,
     stageTool,
     structureCapabilities,
     undo,
@@ -2156,10 +2263,7 @@ export function App() {
       label: "Reorder elements on Stage",
       hint: "M",
       icon: MoveIcon,
-      action: () => {
-        setStageTool("move");
-        setStageAnnouncement("Reorder mode: drag an element to a highlighted placement.");
-      },
+      action: startStageReorder,
     },
     {
       label: "Open Stage workspace",
@@ -2359,6 +2463,7 @@ export function App() {
             project={project}
             selectedNodeId={selectedNodeId}
             structure={structureCommands}
+            canAdd={pageRootReady}
             onAdd={openAddElement}
             onSelect={selectFromTree}
           />
@@ -2428,12 +2533,8 @@ export function App() {
                       label="Reorder elements (M)"
                       active={stageTool === "move"}
                       pressed={stageTool === "move"}
-                      onClick={() => {
-                        setStageTool("move");
-                        setStageAnnouncement(
-                          `Reorder “${modelNode?.editor.name ?? modelNode?.type ?? "selection"}”: drag it to a highlighted placement.`,
-                        );
-                      }}
+                      disabled={!pageRootReady}
+                      onClick={startStageReorder}
                     />
                     <IconButton
                       icon={Hand}
@@ -2654,7 +2755,7 @@ export function App() {
                 <div className="problems-empty" id="problems-panel" role="tabpanel">
                   <Check size={20} />
                   <strong>No current diagnostics</strong>
-                  <span>The active project has no runtime warnings or session failures.</span>
+                  <span>The active project has no model, runtime, or session diagnostics.</span>
                 </div>
               ) : (
                 <div className="problems-list" id="problems-panel" role="tabpanel">
@@ -2663,7 +2764,8 @@ export function App() {
                     <span>{problemWarningCount} warnings</span>
                     <span>{problemInfoCount} info</span>
                     <em>
-                      Runtime issues resolve with the model; session failures clear on success.
+                      Model and runtime issues resolve with the project; session failures clear on
+                      success.
                     </em>
                   </div>
                   <ul aria-label={`${diagnostics.length} project diagnostics`}>
@@ -2678,6 +2780,11 @@ export function App() {
                       const canLocate = Boolean(
                         problemNode && diagnostic.documentId === project.activeDocumentId,
                       );
+                      const canRepairPageRoot =
+                        diagnostic.code === "PAGE_ROOT_MIGRATION_REQUIRED" &&
+                        diagnostic.documentId === project.activeDocumentId &&
+                        pageRootAssessment?.status === "repair-required" &&
+                        ["ROOT_KIND", "ROOT_TYPE", "ROOT_TAG"].includes(pageRootAssessment.reason);
                       const sourceLabel =
                         diagnostic.source === "runtime"
                           ? "Runtime"
@@ -2718,20 +2825,34 @@ export function App() {
                               {diagnostic.occurrences > 1 && <em>×{diagnostic.occurrences}</em>}
                             </div>
                           </div>
-                          <button
-                            type="button"
-                            className="problem-locate"
-                            disabled={!canLocate}
-                            title={canLocate ? `Locate ${location}` : "Location is unavailable"}
-                            aria-label={
-                              canLocate
-                                ? `Locate ${diagnostic.code} on ${location}`
-                                : `${diagnostic.code} location unavailable`
-                            }
-                            onClick={() => locateDiagnostic(diagnostic)}
-                          >
-                            <Eye size={12} />
-                          </button>
+                          <div className="problem-actions">
+                            {canRepairPageRoot && (
+                              <button
+                                type="button"
+                                className="problem-repair"
+                                title="Add a neutral Box wrapper; imported DOM nesting and external CSS selectors may change"
+                                aria-label="Repair imported page structure"
+                                onClick={repairImportedPageRoot}
+                              >
+                                <Wrench size={12} />
+                                <span>Repair</span>
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              className="problem-locate"
+                              disabled={!canLocate}
+                              title={canLocate ? `Locate ${location}` : "Location is unavailable"}
+                              aria-label={
+                                canLocate
+                                  ? `Locate ${diagnostic.code} on ${location}`
+                                  : `${diagnostic.code} location unavailable`
+                              }
+                              onClick={() => locateDiagnostic(diagnostic)}
+                            >
+                              <Eye size={12} />
+                            </button>
+                          </div>
                         </li>
                       );
                     })}

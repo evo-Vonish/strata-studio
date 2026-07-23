@@ -1,6 +1,7 @@
 import type { StrataDocument, StrataNode, StrataProject } from "@strata/project-model";
 import { createDefaultPropertySchemaRegistry } from "@strata/property-schema";
 import type { BasicElementType } from "./element-factory";
+import { assertCompatiblePageRoot, isCompatibleBoxContainer } from "./page-root-migration";
 
 export type InsertionPlacement = "inside" | "before" | "after";
 
@@ -17,14 +18,11 @@ export function acceptsInsertedChildren(node: StrataNode | null): boolean {
   if (!node || !propertySchema.findElement(node.type)?.acceptsChildren) return false;
   // M1.2 only guarantees arbitrary primitive composition inside a Box. Text and Button can carry
   // authored inline children later, but accepting every primitive there would create invalid HTML.
-  return node.type === "Box";
+  return isCompatibleBoxContainer(node);
 }
 
 export function pageRootNode(document: StrataDocument): StrataNode {
-  const rootId = document.rootNodeIds[0];
-  const root = rootId ? document.nodes[rootId] : undefined;
-  if (!root) throw new Error("The document page root is not available");
-  return root;
+  return assertCompatiblePageRoot(document).root;
 }
 
 export function isPageRoot(document: StrataDocument, nodeId: string): boolean {
@@ -69,6 +67,9 @@ export function resolveInsertionTarget(
 ): InsertionTarget {
   const document = project.documents[project.activeDocumentId];
   if (!document) throw new Error("The active document is not available");
+  // Every insertion route relies on the protected Studio page root, even if its immediate target is
+  // a nested node. Refuse before interpreting a stale selection or container capability.
+  assertCompatiblePageRoot(document);
   const selected = selectedNodeId ? document.nodes[selectedNodeId] : undefined;
   if (!selected) {
     const pageRoot = pageRootNode(document);

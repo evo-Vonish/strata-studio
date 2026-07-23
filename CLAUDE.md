@@ -85,6 +85,14 @@ sources of truth.
   preserve project, selection, and history. DOM Runtime and Studio share
   `resolveNodeDomAttributes`, including case-insensitive names, source precedence, and deterministic
   same-source collision diagnostics.
+- **M1.2 Imported Page-root Migration:** Studio now derives a persistent
+  `PAGE_ROOT_MIGRATION_REQUIRED` diagnostic when an imported first root is not a valid element Box
+  with a Registry-supported Box tag. It does not silently rewrite loaded data. The user can Repair
+  through one exact, undoable `source: "import"` transaction that inserts a neutral
+  `div { display: contents }` wrapper and moves former roots into it in order. Existing imported
+  node IDs, fields, opaque/component/locked metadata, and references are preserved; the UI warns
+  that the resulting DOM nesting can affect external CSS selector fidelity. A valid first Box plus
+  legacy root suffix remains unchanged.
 
 The active editor data path is:
 
@@ -99,14 +107,12 @@ Inspector / Stage / Agent intent
 
 ### Active next slice
 
-With diagnostics, conservative Stage reorder, and Reference Integrity complete, finish the
-remaining structural boundary before Blueprint execution:
+With diagnostics, conservative Stage reorder, Reference Integrity, and imported-root migration
+complete, refine placement before Blueprint execution:
 
-1. define an explicit migration/diagnostic path for imported documents without a valid Box page
-   root;
-2. extend Stage placement from its current vertical semantic baseline to Flex/Grid axis-aware
+1. extend Stage placement from its current vertical semantic baseline to Flex/Grid axis-aware
    feedback only after those invariants are covered;
-3. then begin `Button Click -> Set Text` in the minimal Blueprint workspace.
+2. then begin `Button Click -> Set Text` in the minimal Blueprint workspace.
 
 ## Important implementation boundaries
 
@@ -122,15 +128,17 @@ remaining structural boundary before Blueprint execution:
 - Primitive insertion uses opaque, non-recycled type-prefixed UUIDs. The Add UI currently treats
   only Box as a safe arbitrary-primitive parent.
 - `rootNodeIds[0]` is the Studio page-root sentinel. It stays fixed and cannot be deleted, moved,
-  duplicated, or given root siblings. Extra roots from older projects can be normalized into it.
-  This is an editor policy layered above the generic Project Model root array.
+  duplicated, or given root siblings. A valid first Box and any legacy root suffix are preserved
+  as loaded. An invalid imported first root is diagnosed rather than silently normalized; explicit
+  Repair creates the protected wrapper through reversible import operations. This is an editor
+  policy layered above the generic Project Model root array.
 - Hierarchy structure shortcuts run only while the hierarchy/tree toolbar owns focus; Inspector and
   search inputs retain native editing behavior.
 - Stage reorder currently uses explicit mode and conservative vertical semantics; Flex/Grid
   axis-aware placement, auto-scroll, and drag ghosts are not complete yet. Reference Integrity
   v0.1 forbids force-delete and treats `binding`, `raw`, CSS `url()`, `usemap`, and cross-document
-  references as deferred opaque scope. Imported-root migration, cross-document/property-level
-  diagnostic location, and runtime Blueprint execution are not complete yet.
+  references as deferred opaque scope. Cross-document/property-level diagnostic location and
+  runtime Blueprint execution are not complete yet.
 
 ## Repository map
 

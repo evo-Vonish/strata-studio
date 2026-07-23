@@ -1,5 +1,6 @@
 import type { MoveNode, StrataDocument, StrataNode, StrataProject } from "@strata/project-model";
 import { acceptsInsertedChildren, isPageRoot } from "./element-insertion";
+import { analyzePageRoot } from "./page-root-migration";
 
 /** The three structural drop locations exposed by the Stage. */
 export type StagePlacement = "before" | "inside" | "after";
@@ -8,6 +9,7 @@ export type StagePlacementRejectionReason =
   | "unknown-dragged-node"
   | "unknown-hover-target"
   | "dragged-node-locked"
+  | "page-root-migration-required"
   | "page-root-sentinel"
   | "target-in-dragged-subtree"
   | "root-sibling-placement"
@@ -120,6 +122,8 @@ export function planStagePlacement(
   placement: StagePlacement,
 ): StagePlacementPlan {
   const [documentId, document] = activeDocument(project);
+  if (analyzePageRoot(document).status === "repair-required")
+    return unavailable("page-root-migration-required");
   const dragged = nodeContext(document, draggedNodeId);
   if (!dragged)
     return unavailable(document.nodes[draggedNodeId] ? "invalid-tree" : "unknown-dragged-node");

@@ -17,6 +17,7 @@ import {
   rewriteDuplicatedDomReferences,
 } from "./dom-reference-integrity";
 import { assertCanContainElement, isPageRoot, pageRootNode } from "./element-insertion";
+import { analyzePageRoot, assertCompatiblePageRoot } from "./page-root-migration";
 
 export type StructureMoveDirection = "up" | "down" | "indent" | "outdent";
 
@@ -109,6 +110,7 @@ function isProtectedRoot(document: StrataDocument, nodeId: string): boolean {
 
 function nodeContext(project: StrataProject, nodeId: string): NodeContext {
   const [documentId, document] = activeDocument(project);
+  assertCompatiblePageRoot(document);
   const node = document.nodes[nodeId];
   if (!node) throw new Error(`Unknown node '${nodeId}' in the active document`);
   if (isProtectedRoot(document, nodeId))
@@ -144,6 +146,7 @@ export function getElementStructureCapabilities(
   selectedNodeId: string | null,
 ): ElementStructureCapabilities {
   const [, document] = activeDocument(project);
+  if (analyzePageRoot(document).status === "repair-required") return { ...unavailableCapabilities };
   if (!selectedNodeId || isProtectedRoot(document, selectedNodeId))
     return { ...unavailableCapabilities };
   const node = document.nodes[selectedNodeId];

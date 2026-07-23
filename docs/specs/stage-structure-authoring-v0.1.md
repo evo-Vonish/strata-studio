@@ -2,8 +2,8 @@
 
 Last updated: 2026-07-23
 
-Status: insertion, hierarchy-command, explicit Stage reorder, and Reference Integrity v0.1
-implemented
+Status: insertion, hierarchy-command, explicit Stage reorder, Reference Integrity v0.1, and
+Imported Page-root Migration v0.1 implemented
 
 This specification defines how the Studio creates, places, reorders, reparents, duplicates, and
 deletes the five initial primitive elements without making the rendered DOM authoritative.
@@ -61,8 +61,10 @@ This keeps redo pinned to the authored document if the active page later changes
 
 Before and After are unavailable for every page-level root. Studio-authored insertion never adds a
 new entry to `rootNodeIds`; it creates content inside the page container. An invalid or non-Box
-first root fails explicitly rather than receiving a silent wrapper that could change imported DOM
-or CSS fidelity.
+first root is surfaced as the persistent `PAGE_ROOT_MIGRATION_REQUIRED` Problem rather than
+receiving a silent wrapper. The user may explicitly Repair through the reversible,
+fidelity-aware import transaction defined in
+[Imported Page-root Migration v0.1](imported-page-root-migration-v0.1.md).
 
 ## Page-root policy
 
@@ -79,7 +81,19 @@ The Studio treats `document.rootNodeIds[0]` as the protected page-root sentinel:
 
 This is currently a Studio structure policy, not a generic Project Model invariant. The core model
 continues to support a non-empty ordered root array for import/export and future renderer needs.
-Import migration for a first root that is not a compatible Box remains explicit future work.
+An imported first root that is not a compatible element Box with a Registry-supported Box tag is
+diagnosed and repaired only through explicit user intent. A valid first Box plus any legacy root
+suffix remains unchanged; Studio does not silently swallow additional imported roots into it.
+
+### Imported page-root repair
+
+Repair adds a neutral protected `div` Box with `display: contents` and reparents each former root
+inside it in original order through one `source: "import"` transaction. Existing roots keep their
+IDs, fields, references, locks, opaque/component kinds, and descendants; the transaction changes
+only the top-level relationships needed to establish the sentinel. Undo and Redo restore the exact
+pre-repair tree and the same wrapper snapshot. Because any wrapper changes DOM nesting, the UI
+warns that imported CSS selectors and visual fidelity can change. See
+[Imported Page-root Migration v0.1](imported-page-root-migration-v0.1.md) for the full contract.
 
 ### Conservative HTML content model
 
@@ -221,6 +235,5 @@ protected/locked/descendant/root-sibling rejection, no-op drops, and exact `Move
 
 - Flex/Grid-axis-aware Stage placement, auto-scroll, drag ghosts, and richer layout preview beyond
   the current conservative vertical semantic feedback;
-- imported-document migration when the first root is not a compatible Box sentinel;
 - richer tag-aware parent/child validation beyond the conservative Box-only policy;
 - replace the starter Image placeholder through the asset workflow.

@@ -2,6 +2,7 @@ import { applyOperation } from "@strata/project-model";
 import { describe, expect, it } from "vitest";
 import { createElementNode } from "./element-factory";
 import { createElementId, resolveInsertionTarget } from "./element-insertion";
+import { PageRootMigrationError } from "./page-root-migration";
 import { createStudioProject } from "./studio-project";
 
 describe("element insertion", () => {
@@ -61,12 +62,22 @@ describe("element insertion", () => {
     expect(() => resolveInsertionTarget(project, "page-root", "after", "Text")).toThrow(
       /protected/,
     );
+  });
 
+  it("blocks every insertion route until an imported page root is repaired", () => {
+    const project = createStudioProject();
     const document = project.documents.home;
     if (!document?.nodes["page-root"]) throw new Error("The page-root fixture node is missing");
     document.nodes["page-root"].type = "Text";
+
     expect(() => resolveInsertionTarget(project, null, "inside", "Text")).toThrow(
-      /cannot contain primitive/,
+      PageRootMigrationError,
+    );
+    expect(() => resolveInsertionTarget(project, "hero", "inside", "Text")).toThrow(
+      PageRootMigrationError,
+    );
+    expect(() => resolveInsertionTarget(project, "primary-action", "after", "Text")).toThrow(
+      PageRootMigrationError,
     );
   });
 

@@ -125,6 +125,139 @@ describe("Strata Studio model integration", () => {
     expect(container.textContent).toContain("11 nodes · compiled stage");
   });
 
+  it("diagnoses an imported non-Box page root and repairs it through exact history", async () => {
+    const input = requiredStoredProject();
+    const document = homeDocument(input);
+    const originalRootIds = [...document.rootNodeIds];
+    const importedRootId = originalRootIds[0];
+    const importedRoot = importedRootId ? document.nodes[importedRootId] : undefined;
+    if (!importedRootId || !importedRoot) throw new Error("Imported root fixture is missing");
+    importedRoot.type = "Text";
+    const original = structuredClone(input);
+
+    await remountWithProject(input);
+
+    const storedBeforeRepair = requiredStoredProject();
+    expect(storedBeforeRepair).toEqual(original);
+    expect(homeDocument(storedBeforeRepair).rootNodeIds).toEqual(originalRootIds);
+    expect(homeDocument(storedBeforeRepair).nodes[importedRootId]?.type).toBe("Text");
+    expect(container.querySelector<HTMLIFrameElement>(".model-stage-frame")?.srcdoc).toContain(
+      `data-strata-node-id="${importedRootId}"`,
+    );
+
+    const add = container.querySelector<HTMLButtonElement>('button[aria-label="Add element"]');
+    const reorder = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Reorder elements (M)"]',
+    );
+    const undo = container.querySelector<HTMLButtonElement>('button[aria-label="Undo"]');
+    const redo = container.querySelector<HTMLButtonElement>('button[aria-label="Redo"]');
+    const status = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Open Problems: 1"]',
+    );
+    if (!add || !reorder || !undo || !redo || !status)
+      throw new Error("Page-root migration controls are incomplete");
+    expect(add.disabled).toBe(true);
+    expect(reorder.disabled).toBe(true);
+    expect(undo.disabled).toBe(true);
+
+    await act(async () => status.click());
+    const problem = container.querySelector(".problem-row");
+    expect(problem?.textContent).toContain("PAGE_ROOT_MIGRATION_REQUIRED");
+    expect(problem?.textContent).toContain("external CSS selectors");
+    const clear = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Clear session problems"]',
+    );
+    expect(clear?.disabled).toBe(true);
+
+    const repair = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Repair imported page structure"]',
+    );
+    if (!repair) throw new Error("Page-root Repair action is missing");
+
+    const locate = problem?.querySelector<HTMLButtonElement>(".problem-locate");
+    if (!locate) throw new Error("Imported root Locate action is missing");
+    await act(async () => locate.click());
+    expect(selectedLayer(container).textContent).toContain(
+      importedRoot.editor.name ?? importedRootId,
+    );
+
+    const selectTool = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Select (P)"]',
+    );
+    const reorderTool = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Reorder elements (M)"]',
+    );
+    if (!selectTool || !reorderTool) throw new Error("Stage reorder controls are missing");
+    await act(async () =>
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "m", bubbles: true })),
+    );
+    expect(selectTool.classList.contains("active")).toBe(true);
+    expect(reorderTool.classList.contains("active")).toBe(false);
+
+    await act(async () =>
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true }),
+      ),
+    );
+    const commandInput = container.querySelector<HTMLInputElement>(
+      'input[aria-label="Search commands"]',
+    );
+    if (!commandInput) throw new Error("Command palette did not open");
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      if (!valueSetter) throw new Error("Native input setter is missing");
+      valueSetter.call(commandInput, "Reorder elements on Stage");
+      commandInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const reorderCommand = [
+      ...container.querySelectorAll<HTMLButtonElement>(".palette-results button"),
+    ].find((button) => button.textContent?.includes("Reorder elements on Stage"));
+    if (!reorderCommand) throw new Error("Reorder command is missing from the palette");
+    await act(async () => reorderCommand.click());
+    expect(selectTool.classList.contains("active")).toBe(true);
+    expect(reorderTool.classList.contains("active")).toBe(false);
+
+    await act(async () => repair.click());
+
+    const migrated = requiredStoredProject();
+    const migratedDocument = homeDocument(migrated);
+    const wrapperId = migratedDocument.rootNodeIds[0];
+    if (!wrapperId) throw new Error("Migrated page root is missing");
+    expect(wrapperId).not.toBe(importedRootId);
+    expect(wrapperId).toMatch(/^page-root-/);
+    expect(migratedDocument.rootNodeIds).toEqual([wrapperId]);
+    expect(migratedDocument.nodes[wrapperId]).toMatchObject({
+      kind: "element",
+      type: "Box",
+      tag: "div",
+      children: originalRootIds,
+      styleRules: [
+        {
+          scope: {},
+          properties: { display: { kind: "literal", value: "contents" } },
+        },
+      ],
+    });
+    expect(migratedDocument.nodes[importedRootId]).toMatchObject({
+      type: "Text",
+      parentId: wrapperId,
+    });
+    expect(container.textContent).not.toContain("PAGE_ROOT_MIGRATION_REQUIRED");
+    expect(add.disabled).toBe(false);
+    expect(reorder.disabled).toBe(false);
+    expect(undo.disabled).toBe(false);
+
+    await act(async () => undo.click());
+    expect(requiredStoredProject()).toEqual(original);
+    expect(
+      container.querySelector<HTMLButtonElement>('button[aria-label="Open Problems: 1"]'),
+    ).not.toBeNull();
+
+    await act(async () => redo.click());
+    expect(requiredStoredProject()).toEqual(migrated);
+    expect(container.textContent).not.toContain("PAGE_ROOT_MIGRATION_REQUIRED");
+  });
+
   it("shows runtime diagnostics in Problems, locates their node, and resolves them from the model", async () => {
     const input = requiredStoredProject();
     const signalImage = homeDocument(input).nodes["signal-image"];

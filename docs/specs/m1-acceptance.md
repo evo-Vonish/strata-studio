@@ -12,6 +12,7 @@ Related specifications:
 - [DOM Runtime v0.1](dom-runtime-v0.1.md)
 - [Studio Diagnostics v0.1](diagnostics-v0.1.md)
 - [Reference Integrity v0.1](reference-integrity-v0.1.md)
+- [Imported Page-root Migration v0.1](imported-page-root-migration-v0.1.md)
 
 ## Milestone outcome
 
@@ -47,8 +48,9 @@ Undo/Redo; Escape, pointer cancellation or capture loss, blur, tool changes, and
 cancel without a transaction.
 Reference Integrity v0.1 now implements the typed node-reference delete boundary, supported DOM
 IDREF hierarchy preflight, authored DOM ID/IDREF duplicate rules, and source-located Problems.
-Imported-root migration and richer Flex/Grid axis-aware placement remain before this gate is
-complete.
+Imported Page-root Migration v0.1 now derives a persistent migration Problem instead of silently
+rewriting invalid imported roots, and Repair applies the collision-free, exact-undoable wrapper
+transaction. Richer Flex/Grid axis-aware placement remains before this gate is complete.
 
 - create an empty page and insert the five initial elements;
 - select through a stable Strata node ID;
@@ -73,9 +75,22 @@ rows, accessible tabs, and active-document node Locate are implemented. The rend
 and uses that result both for runtime warnings and the inert Stage shell. See
 [Studio Diagnostics v0.1](diagnostics-v0.1.md).
 
-Reference Integrity v0.1 is implemented and verified. The remaining M1.2 integrity boundary is
-imported-root migration. Cross-document navigation and property-level diagnostic location are not
-part of this slice.
+Reference Integrity and Imported Page-root Migration v0.1 are implemented and verified.
+Cross-document navigation and property-level diagnostic location are not part of this slice.
+
+### Implemented imported page-root migration slice
+
+- assess the first imported root as an element Box with a Registry-supported Box tag without
+  mutating valid parsed project data on load;
+- surface an invalid root as the persistent model-derived
+  `PAGE_ROOT_MIGRATION_REQUIRED` Problem and locate the original root;
+- preserve a valid first Box and any legacy root suffix without automatic reparenting;
+- repair only after explicit user intent by inserting a neutral `div { display: contents }` Box
+  wrapper and moving former roots inside it in original order through one `source: "import"`
+  transaction;
+- preserve old root IDs, fields, locks, opaque/component kinds, and references; warn that the new
+  DOM nesting can affect CSS fidelity;
+- restore the exact former project on Undo and the same wrapper snapshot on Redo.
 
 ## M1.3 minimal Blueprint gate
 
