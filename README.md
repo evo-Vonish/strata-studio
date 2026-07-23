@@ -48,9 +48,13 @@ Four implementation checkpoints are present in the repository:
 The Stage is now a projection of the Project Model rather than an independently mutable React DOM
 tree. Reorder is deliberately conservative: it uses vertical semantic drop feedback, parent
 highlights, sibling insertion lines, and disabled-target feedback; Escape, pointer cancellation or
-capture loss, blur, a tool switch, and leaving Stage cancel without a transaction. Remaining M1.2 work is Problems diagnostics,
-reference-integrity handling for delete/duplicate, imported page-root migration, and later
-Flex/Grid axis-aware placement, auto-scroll, and drag ghosts.
+capture loss, blur, a tool switch, and leaving Stage cancel without a transaction. Problems now
+lists Runtime warnings and session operation/structure failures with counts and active-document
+node Locate controls. A successful transaction clears session failures; a model change that
+removes a compiler warning clears it automatically. Studio compiles once for both Problems and the
+inert Stage shell. Remaining M1.2 work is external-reference and DOM IDREF integrity handling for
+delete/duplicate, imported page-root migration, cross-document/property-level diagnostic location,
+and later Flex/Grid axis-aware placement, auto-scroll, and drag ghosts.
 
 ## E0 Element Extractor
 
@@ -94,6 +98,7 @@ The preview runs without scripts or pointer interaction and carries a restrictiv
 | [Element Model and Property Schema](docs/architecture/element-model-and-property-schema.md) | Element registry, capabilities, typed values, state scopes, import/export, and first implementation slice |
 | [M1 technical specifications](docs/specs/m1-acceptance.md) | Project Model, Property Registry, DOM Runtime, operation protocol, and milestone gates |
 | [DOM Runtime v0.1](docs/specs/dom-runtime-v0.1.md) | Deterministic rendering, stable node identity, scope mapping, and preview security boundary |
+| [Studio Diagnostics v0.1](docs/specs/diagnostics-v0.1.md) | Problems records, lifetimes, node location, operation errors, and compile-once Stage integration |
 | [Stage Structure Authoring v0.1](docs/specs/stage-structure-authoring-v0.1.md) | Primitive creation, stable IDs, placement rules, Add Element UX, and current structural boundaries |
 | [Element extractor upstream research](docs/research/element-extractor-upstreams.md) | Pinned upstream study and E0 extraction decisions |
 
@@ -132,13 +137,13 @@ No upstream repository is vendored into this repository. Research clones live ou
 
 ## Next vertical slice
 
-The next slice completes diagnostics and integrity work before Blueprint execution:
+The next slice completes integrity work before Blueprint execution:
 
-1. expose operation and runtime failures in Problems without corrupting history;
-2. diagnose external node references before subtree deletion and authored DOM IDs before duplicate;
-3. define explicit migration for imported documents whose first root is not a valid Box container;
-4. evolve the Stage's current vertical placement feedback to Flex/Grid axis-aware feedback only
+1. diagnose external node references before subtree deletion and authored DOM IDs/IDREFs before
+   duplicate;
+2. define explicit migration for imported documents whose first root is not a valid Box container;
+3. evolve the Stage's current vertical placement feedback to Flex/Grid axis-aware feedback only
    after those invariants are covered;
-5. then begin `Button Click -> Set Text` in the minimal Blueprint workspace.
+4. then begin `Button Click -> Set Text` in the minimal Blueprint workspace.
 
 This slice closes the remaining M1.2 structural gap while keeping every edit on the Project Model.

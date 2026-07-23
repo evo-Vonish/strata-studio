@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   applyOperation,
   applyTransaction,
+  isProjectOperationError,
+  type ProjectOperation,
+  type ProjectOperationError,
   parseProject,
   type StrataProject,
   safeParseProject,
@@ -49,6 +52,15 @@ function fixtureNode(input: StrataProject, documentId = "d", nodeId = "a") {
   const node = input.documents[documentId]?.nodes[nodeId];
   if (!node) throw new Error("Test fixture node is missing");
   return node;
+}
+function operationErrorOf(run: () => unknown): ProjectOperationError {
+  try {
+    run();
+  } catch (error) {
+    if (isProjectOperationError(error)) return error;
+    throw error;
+  }
+  throw new Error("Expected project operation to fail");
 }
 
 describe("project model", () => {
@@ -171,6 +183,50 @@ describe("project model", () => {
     });
     expect(second.project.documents.d?.nodes.root?.attributes.title).toBeUndefined();
   });
+  it("exposes stable error codes, context and Zod causes", () => {
+    const unknownNode = operationErrorOf(() =>
+      applyOperation(project, {
+        type: "SetAttribute",
+        nodeId: "missing",
+        name: "title",
+        value: literal,
+      }),
+    );
+    expect(unknownNode).toMatchObject({
+      code: "UNKNOWN_NODE",
+      operationType: "SetAttribute",
+      documentId: "d",
+      nodeId: "missing",
+    });
+
+    const invalidOperation = operationErrorOf(() =>
+      applyOperation(project, { type: "SetAttribute", nodeId: "a" } as ProjectOperation),
+    );
+    expect(invalidOperation.code).toBe("INVALID_OPERATION");
+    expect(invalidOperation.operationType).toBe("SetAttribute");
+    expect(invalidOperation.cause).toBeDefined();
+
+    const invalidProject = structuredClone(project);
+    invalidProject.activeDocumentId = "missing";
+    const invalidProjectError = operationErrorOf(() => parseProject(invalidProject));
+    expect(invalidProjectError.code).toBe("INVALID_PROJECT");
+    expect(invalidProjectError.cause).toBeDefined();
+
+    const duplicateInsert = operationErrorOf(() =>
+      applyOperation(project, {
+        type: "InsertNode",
+        node: node("a", "root"),
+        parentId: "root",
+        descendants: [],
+      }),
+    );
+    expect(duplicateInsert).toMatchObject({
+      code: "DUPLICATE_ID",
+      operationType: "InsertNode",
+      documentId: "d",
+      nodeId: "a",
+    });
+  });
   it("pins inverse operations to the document resolved during apply", () => {
     const changed = applyOperation(project, {
       type: "SetAttribute",
@@ -209,6 +265,24 @@ describe("project model", () => {
         { type: "MoveNode", nodeId: "a", parentId: "a1" },
       ]),
     ).toThrow();
+    expect(project.documents.d?.nodes.a?.content).toBeUndefined();
+  });
+  it("reports the failed transaction operation and never exposes partial project state", () => {
+    const before = structuredClone(project);
+    const error = operationErrorOf(() =>
+      applyTransaction(project, [
+        { type: "SetContent", nodeId: "a", value: { kind: "unset" } },
+        { type: "MoveNode", nodeId: "a", parentId: "a1" },
+      ]),
+    );
+    expect(error).toMatchObject({
+      code: "CYCLE",
+      operationType: "MoveNode",
+      documentId: "d",
+      nodeId: "a",
+      operationIndex: 1,
+    });
+    expect(project).toEqual(before);
     expect(project.documents.d?.nodes.a?.content).toBeUndefined();
   });
   it("changes semantic tags through a reversible operation", () => {

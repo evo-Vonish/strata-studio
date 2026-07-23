@@ -19,10 +19,15 @@ Box page container, and editor history restores structural selection as well as 
 Reorder begins after a 5px mouse or 8px touch/pen movement threshold, previews parent/container,
 insertion-line, and disabled feedback, and revalidates the latest Project Model before committing a
 single `MoveNode`. Inside is Box-only; cancellation on Escape, pointer cancellation or capture
-loss, blur, tool switch, or leaving Stage does not create history. Current feedback is deliberately vertical-semantic rather than
-Flex/Grid-axis-aware. Remaining work is Problems diagnostics, imported-root migration,
-reference-integrity checks, and later layout-aware refinement. The minimal Blueprint runtime begins
-only after this structural loop is reliable.
+loss, blur, tool switch, or leaving Stage does not create history. Current feedback is deliberately
+vertical-semantic rather than Flex/Grid-axis-aware. Problems diagnostics are now current:
+deterministic Runtime warnings and session operation/structure failures share a countable,
+accessible list with active-document node location. Runtime entries recover when the model
+recompiles cleanly, while a successful transaction clears session failures without creating
+history for a failed transaction. Studio uses one compilation for both diagnostics and the inert
+Stage shell. Remaining work is imported-root migration, external-reference and DOM IDREF integrity
+checks, cross-document/property-level diagnostic location, and later layout-aware refinement. The
+minimal Blueprint runtime begins only after this structural loop is reliable.
 
 ## Product statement
 

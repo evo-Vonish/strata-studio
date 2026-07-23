@@ -1,6 +1,6 @@
 import type { StrataNode, StrataProject } from "@strata/project-model";
 import { describe, expect, it } from "vitest";
-import { buildStageDocument, compileDocument } from "./index";
+import { buildStageDocument, buildStageDocumentFromCompiled, compileDocument } from "./index";
 
 const element = (
   id: string,
@@ -172,5 +172,12 @@ describe("DOM runtime", () => {
     expect(srcDoc).toContain("script-src &#39;none&#39;");
     expect(srcDoc).toContain("Preview &lt;safe&gt;");
     expect(srcDoc).not.toContain("<script");
+  });
+  it("wraps an existing compilation without changing the Stage output", () => {
+    const input = project();
+    const compiled = compileDocument(input);
+    expect(buildStageDocumentFromCompiled(compiled, { title: "Compiled once" })).toBe(
+      buildStageDocument(input, undefined, { title: "Compiled once" }),
+    );
   });
 });

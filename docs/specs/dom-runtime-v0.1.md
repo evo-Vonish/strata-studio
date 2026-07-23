@@ -11,7 +11,10 @@ document. It never becomes a second source of truth.
 - `compileDocument(project, documentId?, options?)` returns `{ html, css, warnings }`;
 - `buildStageDocument(project, documentId?, options?)` returns a complete HTML document with a
   restrictive Content Security Policy;
-- both entry points validate the input through `@strata/project-model` before rendering;
+- `buildStageDocumentFromCompiled(compiled, options?)` wraps an existing deterministic
+  `CompiledDocument` in that same inert Stage shell, for callers that also consume `warnings`;
+- `compileDocument` and `buildStageDocument` validate project input through
+  `@strata/project-model` before rendering;
 - equivalent project state produces equivalent output.
 
 Every rendered element carries `data-strata-node-id`. Authored style rules receive deterministic
@@ -44,6 +47,10 @@ The Studio mounts the result in an iframe with `allow-same-origin` only. Same-or
 the editor can select projected nodes and measure overlays; the document itself receives no script
 permission.
 
+`buildStageDocumentFromCompiled` is for output already produced by this runtime, not a second
+untrusted-markup entry point. It preserves the shell CSP and does not replace compiler escaping or
+sanitization.
+
 ## Studio data flow
 
 ```text
@@ -59,6 +66,11 @@ Undo and redo replay inverse and forward operations against the Project Model. T
 DOM snapshot. Local storage contains the validated project, while history remains session-local in
 v0.1.
 
+The Studio compiles the active document once per Project Model render. It uses the resulting HTML
+and CSS to construct the Stage shell through `buildStageDocumentFromCompiled`, and converts the
+same result's warnings into Problems diagnostics. This prevents a diagnostic pass from causing a
+second compilation or changing the CSP/sandbox boundary.
+
 ## Known boundaries
 
 - component and slot semantics currently render as neutral elements with warnings;
@@ -66,7 +78,8 @@ v0.1.
 - token declarations and binding evaluation need the later runtime environment;
 - imported unknown nodes retain passthrough data, but advanced editing uses a future fallback
   Inspector;
-- warning display in the Studio Problems panel is not connected yet.
+- compiler warnings are connected to Problems for the active document; cross-document diagnostic
+  navigation and property-specific Inspector focus are not connected yet.
 
 ## Verification
 

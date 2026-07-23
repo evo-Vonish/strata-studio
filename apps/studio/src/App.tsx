@@ -1,6 +1,6 @@
 "use client";
 
-import { buildStageDocument } from "@strata/dom-runtime";
+import { buildStageDocumentFromCompiled, compileDocument } from "@strata/dom-runtime";
 import type { StrataElementBundle } from "@strata/element-bundle";
 import { buildPreviewDocument, extractElement } from "@strata/element-extractor";
 import { getElementBounds } from "@strata/element-picker";
@@ -21,6 +21,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  CircleAlert,
   Code2,
   Command,
   Component as ComponentIcon,
@@ -35,6 +36,7 @@ import {
   Image as ImageIcon,
   IndentDecrease,
   IndentIncrease,
+  Info,
   Library,
   type LucideIcon,
   Maximize2,
@@ -57,6 +59,7 @@ import {
   Tablet,
   Terminal,
   Trash2,
+  TriangleAlert,
   Type,
   Undo2,
   Workflow,
@@ -98,6 +101,14 @@ import {
   type StagePlacementRejectionReason,
   stagePlacementFromPoint,
 } from "./stage-placement";
+import {
+  appendSessionDiagnostic,
+  compileWarningsToDiagnostics,
+  createStudioDiagnostic,
+  mergeDiagnostics,
+  operationErrorToDiagnostic,
+  type StudioDiagnostic,
+} from "./studio-diagnostics";
 import {
   createStudioProject,
   selectedNode as findSelectedNode,
@@ -988,6 +999,7 @@ export function App() {
   const [bundle, setBundle] = useState<StrataElementBundle | null>(null);
   const [properties, setProperties] = useState<ElementProperties>(DEFAULT_PROPERTIES);
   const [error, setError] = useState<string | null>(null);
+  const [sessionDiagnostics, setSessionDiagnostics] = useState<StudioDiagnostic[]>([]);
   const [overlayStyle, setOverlayStyle] = useState<CSSProperties>({ display: "none" });
   const [revision, setRevision] = useState(0);
   const [leftWidth, setLeftWidth] = useState(248);
@@ -1011,15 +1023,32 @@ export function App() {
     },
   ]);
   const modelNode = findSelectedNode(project, selectedNodeId);
-  const stageDocument = useMemo(
-    () =>
-      buildStageDocument(
-        project,
-        project.activeDocumentId,
-        project.name ? { title: project.name } : {},
-      ),
+  const stageCompilation = useMemo(
+    () => compileDocument(project, project.activeDocumentId),
     [project],
   );
+  const stageDocument = useMemo(
+    () =>
+      buildStageDocumentFromCompiled(stageCompilation, project.name ? { title: project.name } : {}),
+    [project.name, stageCompilation],
+  );
+  const runtimeDiagnostics = useMemo(
+    () => compileWarningsToDiagnostics(project.activeDocumentId, stageCompilation.warnings),
+    [project.activeDocumentId, stageCompilation.warnings],
+  );
+  const diagnostics = useMemo(
+    () => mergeDiagnostics(sessionDiagnostics, runtimeDiagnostics),
+    [runtimeDiagnostics, sessionDiagnostics],
+  );
+  const problemErrorCount = diagnostics.filter(
+    (diagnostic) => diagnostic.severity === "error",
+  ).length;
+  const problemWarningCount = diagnostics.filter(
+    (diagnostic) => diagnostic.severity === "warning",
+  ).length;
+  const problemInfoCount = diagnostics.filter(
+    (diagnostic) => diagnostic.severity === "info",
+  ).length;
   const selectionPath = useMemo(() => {
     const document = project.documents[project.activeDocumentId];
     const path: StrataNode[] = [];
@@ -1047,6 +1076,19 @@ export function App() {
       );
     },
     [],
+  );
+
+  const reportSessionDiagnostic = useCallback(
+    (diagnostic: StudioDiagnostic, label: string, options: { reveal?: boolean } = {}) => {
+      setSessionDiagnostics((current) => appendSessionDiagnostic(current, diagnostic));
+      setError(diagnostic.message);
+      addOperation(label, `${diagnostic.code} · ${diagnostic.message}`, "system");
+      if (options.reveal ?? diagnostic.severity === "error") {
+        setBottomTab("problems");
+        setBottomOpen(true);
+      }
+    },
+    [addOperation],
   );
 
   const captureElement = useCallback(
@@ -1386,16 +1428,40 @@ export function App() {
   }, [paletteOpen]);
 
   const applyModelOperations = useCallback(
-    (nextOperations: ProjectOperation[], label: string, options: ApplyModelOptions = {}) => {
-      if (nextOperations.length === 0) return;
-      applyOperations(nextOperations, label, options.history);
-      addOperation(
-        nextOperations.length === 1 ? (nextOperations[0]?.type ?? "Operation") : "Transaction",
-        `${label} · ${nextOperations.length} operation${nextOperations.length === 1 ? "" : "s"}`,
-        options.tone ?? "edit",
-      );
+    (
+      nextOperations: ProjectOperation[],
+      label: string,
+      options: ApplyModelOptions = {},
+    ): boolean => {
+      if (nextOperations.length === 0) return true;
+      try {
+        applyOperations(nextOperations, label, options.history);
+        setSessionDiagnostics([]);
+        setError(null);
+        addOperation(
+          nextOperations.length === 1 ? (nextOperations[0]?.type ?? "Operation") : "Transaction",
+          `${label} · ${nextOperations.length} operation${nextOperations.length === 1 ? "" : "s"}`,
+          options.tone ?? "edit",
+        );
+        return true;
+      } catch (caught) {
+        const first = nextOperations[0];
+        const nodeId =
+          first && "nodeId" in first
+            ? first.nodeId
+            : first?.type === "InsertNode"
+              ? first.node.id
+              : undefined;
+        const diagnostic = operationErrorToDiagnostic(caught, {
+          documentId: first?.documentId ?? projectRef.current.activeDocumentId,
+          ...(nodeId ? { nodeId } : {}),
+          ...(first ? { operationType: first.type } : {}),
+        });
+        reportSessionDiagnostic(diagnostic, `${label} failed`);
+        return false;
+      }
     },
-    [addOperation, applyOperations],
+    [addOperation, applyOperations, reportSessionDiagnostic],
   );
 
   const commitStagePlacement = useCallback(
@@ -1406,9 +1472,19 @@ export function App() {
       const plan = planStagePlacement(activeProject, sourceNodeId, targetNodeId, placement);
       if (plan.status === "unavailable") {
         const message = `Stage move blocked: ${stagePlacementReasonLabels[plan.reason]}.`;
-        setError(message);
         setStageAnnouncement(message);
-        addOperation("Stage move blocked", message, "system");
+        reportSessionDiagnostic(
+          createStudioDiagnostic({
+            severity: "warning",
+            source: "structure",
+            code: `STAGE_${plan.reason.toUpperCase().replaceAll("-", "_")}`,
+            message,
+            documentId: activeProject.activeDocumentId,
+            nodeId: sourceNodeId,
+          }),
+          "Stage move blocked",
+          { reveal: false },
+        );
         return;
       }
       if (plan.status === "no-op") {
@@ -1417,12 +1493,20 @@ export function App() {
       }
 
       try {
-        applyModelOperations([plan.command.operation], `Stage move · ${sourceName}`, {
-          history: {
-            selectionBefore: sourceNodeId,
-            selectionAfter: plan.command.selectionNodeId,
+        const applied = applyModelOperations(
+          [plan.command.operation],
+          `Stage move · ${sourceName}`,
+          {
+            history: {
+              selectionBefore: sourceNodeId,
+              selectionAfter: plan.command.selectionNodeId,
+            },
           },
-        });
+        );
+        if (!applied) {
+          setStageAnnouncement("Stage move failed. Open Problems for details.");
+          return;
+        }
         setSelectedNodeId(plan.command.selectionNodeId);
         setSelected(null);
         setHovered(null);
@@ -1431,13 +1515,16 @@ export function App() {
           `Moved “${sourceName}” ${placement} “${targetName}”. Undo with Control or Command Z.`,
         );
       } catch (caught) {
-        const message = caught instanceof Error ? caught.message : "The Stage move could not apply";
-        setError(message);
-        setStageAnnouncement(message);
-        addOperation("Stage move failed", message, "system");
+        const diagnostic = operationErrorToDiagnostic(caught, {
+          documentId: activeProject.activeDocumentId,
+          nodeId: sourceNodeId,
+          operationType: "MoveNode",
+        });
+        reportSessionDiagnostic(diagnostic, "Stage move failed");
+        setStageAnnouncement(diagnostic.message);
       }
     },
-    [addOperation, applyModelOperations],
+    [applyModelOperations, reportSessionDiagnostic],
   );
   stageMoveCommitRef.current = commitStagePlacement;
 
@@ -1449,7 +1536,7 @@ export function App() {
         const target = resolveInsertionTarget(project, selectedNodeId, placement, type);
         const nodeId = createElementId(document, type);
         const node = createElementNode({ type, nodeId, parentId: target.parentId });
-        applyModelOperations(
+        const applied = applyModelOperations(
           [
             {
               type: "InsertNode",
@@ -1466,6 +1553,7 @@ export function App() {
             history: { selectionBefore: selectedNodeId, selectionAfter: nodeId },
           },
         );
+        if (!applied) return;
         setSelectedNodeId(nodeId);
         setSelected(null);
         setHovered(null);
@@ -1474,12 +1562,17 @@ export function App() {
         setAddElementOpen(false);
         setError(null);
       } catch (caught) {
-        const message = caught instanceof Error ? caught.message : `Could not insert ${type}`;
-        setError(message);
-        addOperation("Insert failed", message, "system");
+        reportSessionDiagnostic(
+          operationErrorToDiagnostic(caught, {
+            documentId: document.id,
+            ...(selectedNodeId ? { nodeId: selectedNodeId } : {}),
+            operationType: "InsertNode",
+          }),
+          "Insert failed",
+        );
       }
     },
-    [addOperation, applyModelOperations, project, selectedNodeId],
+    [applyModelOperations, project, reportSessionDiagnostic, selectedNodeId],
   );
 
   const moveElement = useCallback(
@@ -1493,66 +1586,84 @@ export function App() {
           indent: "Move element inside previous Box",
           outdent: "Move element out",
         };
-        applyModelOperations(command.operations, labels[direction], {
+        const applied = applyModelOperations(command.operations, labels[direction], {
           history: {
             selectionBefore: selectedNodeId,
             selectionAfter: command.selectionNodeId,
           },
         });
+        if (!applied) return;
         setSelectedNodeId(command.selectionNodeId);
         setSelected(null);
         setHovered(null);
         setError(null);
       } catch (caught) {
-        const message = caught instanceof Error ? caught.message : "Could not move the element";
-        setError(message);
-        addOperation("Move failed", message, "system");
+        reportSessionDiagnostic(
+          operationErrorToDiagnostic(caught, {
+            documentId: project.activeDocumentId,
+            nodeId: selectedNodeId,
+            operationType: "MoveNode",
+          }),
+          "Move failed",
+        );
       }
     },
-    [addOperation, applyModelOperations, project, selectedNodeId],
+    [applyModelOperations, project, reportSessionDiagnostic, selectedNodeId],
   );
 
   const duplicateElement = useCallback(() => {
     if (!selectedNodeId) return;
     try {
       const command = createDuplicateElementCommand(project, selectedNodeId);
-      applyModelOperations(command.operations, "Duplicate subtree", {
+      const applied = applyModelOperations(command.operations, "Duplicate subtree", {
         history: {
           selectionBefore: selectedNodeId,
           selectionAfter: command.selectionNodeId,
         },
       });
+      if (!applied) return;
       setSelectedNodeId(command.selectionNodeId);
       setSelected(null);
       setHovered(null);
       setError(null);
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : "Could not duplicate the element";
-      setError(message);
-      addOperation("Duplicate failed", message, "system");
+      reportSessionDiagnostic(
+        operationErrorToDiagnostic(caught, {
+          documentId: project.activeDocumentId,
+          nodeId: selectedNodeId,
+          operationType: "InsertNode",
+        }),
+        "Duplicate failed",
+      );
     }
-  }, [addOperation, applyModelOperations, project, selectedNodeId]);
+  }, [applyModelOperations, project, reportSessionDiagnostic, selectedNodeId]);
 
   const deleteElement = useCallback(() => {
     if (!selectedNodeId) return;
     try {
       const command = createDeleteElementCommand(project, selectedNodeId);
-      applyModelOperations(command.operations, "Delete subtree", {
+      const applied = applyModelOperations(command.operations, "Delete subtree", {
         history: {
           selectionBefore: selectedNodeId,
           selectionAfter: command.selectionFallbackId,
         },
       });
+      if (!applied) return;
       setSelectedNodeId(command.selectionFallbackId);
       setSelected(null);
       setHovered(null);
       setError(null);
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : "Could not delete the element";
-      setError(message);
-      addOperation("Delete failed", message, "system");
+      reportSessionDiagnostic(
+        operationErrorToDiagnostic(caught, {
+          documentId: project.activeDocumentId,
+          nodeId: selectedNodeId,
+          operationType: "RemoveNode",
+        }),
+        "Delete failed",
+      );
     }
-  }, [addOperation, applyModelOperations, project, selectedNodeId]);
+  }, [applyModelOperations, project, reportSessionDiagnostic, selectedNodeId]);
 
   const structureCapabilities = useMemo(
     () => getElementStructureCapabilities(project, selectedNodeId),
@@ -1584,26 +1695,50 @@ export function App() {
   ]);
 
   const undo = useCallback(() => {
-    const result = undoProject();
-    if (!result) return;
-    if (result.selectionId !== undefined) {
-      setSelectedNodeId(result.selectionId);
-      setSelected(null);
-      setHovered(null);
+    try {
+      const result = undoProject();
+      if (!result) return;
+      setSessionDiagnostics([]);
+      setError(null);
+      if (result.selectionId !== undefined) {
+        setSelectedNodeId(result.selectionId);
+        setSelected(null);
+        setHovered(null);
+      }
+      addOperation("Undo", result.label, "system");
+    } catch (caught) {
+      reportSessionDiagnostic(
+        operationErrorToDiagnostic(caught, {
+          documentId: projectRef.current.activeDocumentId,
+          operationType: "Undo",
+        }),
+        "Undo failed",
+      );
     }
-    addOperation("Undo", result.label, "system");
-  }, [addOperation, undoProject]);
+  }, [addOperation, reportSessionDiagnostic, undoProject]);
 
   const redo = useCallback(() => {
-    const result = redoProject();
-    if (!result) return;
-    if (result.selectionId !== undefined) {
-      setSelectedNodeId(result.selectionId);
-      setSelected(null);
-      setHovered(null);
+    try {
+      const result = redoProject();
+      if (!result) return;
+      setSessionDiagnostics([]);
+      setError(null);
+      if (result.selectionId !== undefined) {
+        setSelectedNodeId(result.selectionId);
+        setSelected(null);
+        setHovered(null);
+      }
+      addOperation("Redo", result.label, "system");
+    } catch (caught) {
+      reportSessionDiagnostic(
+        operationErrorToDiagnostic(caught, {
+          documentId: projectRef.current.activeDocumentId,
+          operationType: "Redo",
+        }),
+        "Redo failed",
+      );
     }
-    addOperation("Redo", result.label, "system");
-  }, [addOperation, redoProject]);
+  }, [addOperation, redoProject, reportSessionDiagnostic]);
 
   const commitStyles = useCallback(
     (styles: Array<[string, string]>, label: string) => {
@@ -1647,6 +1782,38 @@ export function App() {
     const element = projectionFor(runtimeFrameRef.current?.contentDocument ?? null, nodeId);
     if (element) captureElement(element);
     setWorkspaceMode("stage");
+  };
+
+  const locateDiagnostic = (diagnostic: StudioDiagnostic) => {
+    if (
+      !diagnostic.nodeId ||
+      diagnostic.documentId !== project.activeDocumentId ||
+      !project.documents[diagnostic.documentId]?.nodes[diagnostic.nodeId]
+    )
+      return;
+    setSelectedNodeId(diagnostic.nodeId);
+    const element = projectionFor(
+      runtimeFrameRef.current?.contentDocument ?? null,
+      diagnostic.nodeId,
+    );
+    if (element) captureElement(element, { quiet: true });
+    else {
+      setSelected(null);
+      setHovered(null);
+    }
+    setWorkspaceMode("stage");
+    setActiveTool("hierarchy");
+    setLeftOpen(true);
+    setBottomOpen(true);
+    setBottomTab("problems");
+  };
+
+  const clearBottomPanel = () => {
+    if (bottomTab === "operations") setOperations((items) => items.filter((item) => item.id === 0));
+    if (bottomTab === "problems") {
+      setSessionDiagnostics([]);
+      setError(null);
+    }
   };
 
   const selectWorkspaceMode = (mode: WorkspaceMode) => {
@@ -1873,10 +2040,17 @@ export function App() {
   const applyAgentPlan = () => {
     const documentId = project.activeDocumentId;
     if (!project.documents[documentId]?.nodes[INITIAL_SELECTED_NODE_ID]) {
-      addOperation(
+      reportSessionDiagnostic(
+        createStudioDiagnostic({
+          severity: "error",
+          source: "structure",
+          code: "AGENT_TARGET_MISSING",
+          message: `Target ${INITIAL_SELECTED_NODE_ID} is not present in the active document`,
+          documentId,
+          nodeId: INITIAL_SELECTED_NODE_ID,
+          operationType: "AgentPlan",
+        }),
         "Agent plan blocked",
-        `Target ${INITIAL_SELECTED_NODE_ID} is not present in the active document`,
-        "system",
       );
       return;
     }
@@ -1909,8 +2083,11 @@ export function App() {
         value: { kind: "literal", value: "translateY(-3px)" },
       },
     ];
+    const applied = applyModelOperations(operations, "Agent plan · Primary action", {
+      tone: "agent",
+    });
+    if (!applied) return;
     setSelectedNodeId(INITIAL_SELECTED_NODE_ID);
-    applyModelOperations(operations, "Agent plan · Primary action", { tone: "agent" });
     setWorkspaceMode("stage");
   };
 
@@ -2331,10 +2508,13 @@ export function App() {
             onPointerDown={(event) => startResize("bottom", event)}
           />
           <section className="bottom-panel" data-studio-ui>
-            <div className="bottom-tabs">
+            <div className="bottom-tabs" role="tablist" aria-label="Bottom panel">
               <button
                 className={bottomTab === "operations" ? "active" : ""}
                 type="button"
+                role="tab"
+                aria-selected={bottomTab === "operations"}
+                aria-controls="operations-panel"
                 onClick={() => setBottomTab("operations")}
               >
                 Operations <span>{operations.filter((item) => item.tone !== "system").length}</span>
@@ -2342,6 +2522,9 @@ export function App() {
               <button
                 className={bottomTab === "console" ? "active" : ""}
                 type="button"
+                role="tab"
+                aria-selected={bottomTab === "console"}
+                aria-controls="console-panel"
                 onClick={() => setBottomTab("console")}
               >
                 Console
@@ -2349,15 +2532,28 @@ export function App() {
               <button
                 className={bottomTab === "problems" ? "active" : ""}
                 type="button"
+                role="tab"
+                aria-selected={bottomTab === "problems"}
+                aria-controls="problems-panel"
                 onClick={() => setBottomTab("problems")}
               >
-                Problems <span>0</span>
+                Problems{" "}
+                <span className={problemErrorCount > 0 ? "has-errors" : ""}>
+                  {diagnostics.length}
+                </span>
               </button>
               <div />
               <button
                 type="button"
-                title="Clear"
-                onClick={() => setOperations((items) => items.filter((item) => item.id === 0))}
+                title={bottomTab === "problems" ? "Clear session problems" : "Clear operations"}
+                aria-label={
+                  bottomTab === "problems" ? "Clear session problems" : "Clear operations"
+                }
+                disabled={
+                  bottomTab === "console" ||
+                  (bottomTab === "problems" && sessionDiagnostics.length === 0)
+                }
+                onClick={clearBottomPanel}
               >
                 <X size={13} />
               </button>
@@ -2366,7 +2562,7 @@ export function App() {
               </button>
             </div>
             {bottomTab === "operations" && (
-              <div className="operations-list">
+              <div className="operations-list" id="operations-panel" role="tabpanel">
                 {operations.map((operation) => (
                   <div className={`operation-row ${operation.tone}`} key={operation.id}>
                     <span>
@@ -2386,7 +2582,7 @@ export function App() {
               </div>
             )}
             {bottomTab === "console" && (
-              <div className="console-view">
+              <div className="console-view" id="console-panel" role="tabpanel">
                 <p>
                   <span>strata</span> Project Store connected
                 </p>
@@ -2405,13 +2601,89 @@ export function App() {
                 </div>
               </div>
             )}
-            {bottomTab === "problems" && (
-              <div className="problems-empty">
-                <Check size={20} />
-                <strong>No problems detected</strong>
-                <span>Property schema, operations and stage render are valid.</span>
-              </div>
-            )}
+            {bottomTab === "problems" &&
+              (diagnostics.length === 0 ? (
+                <div className="problems-empty" id="problems-panel" role="tabpanel">
+                  <Check size={20} />
+                  <strong>No current diagnostics</strong>
+                  <span>The active project has no runtime warnings or session failures.</span>
+                </div>
+              ) : (
+                <div className="problems-list" id="problems-panel" role="tabpanel">
+                  <div className="problems-summary">
+                    <span>{problemErrorCount} errors</span>
+                    <span>{problemWarningCount} warnings</span>
+                    <span>{problemInfoCount} info</span>
+                    <em>
+                      Runtime issues resolve with the model; session failures clear on success.
+                    </em>
+                  </div>
+                  <ul aria-label={`${diagnostics.length} project diagnostics`}>
+                    {diagnostics.map((diagnostic) => {
+                      const problemDocument = project.documents[diagnostic.documentId];
+                      const problemNode = diagnostic.nodeId
+                        ? problemDocument?.nodes[diagnostic.nodeId]
+                        : undefined;
+                      const canLocate = Boolean(
+                        problemNode && diagnostic.documentId === project.activeDocumentId,
+                      );
+                      const sourceLabel =
+                        diagnostic.source === "runtime"
+                          ? "Runtime"
+                          : diagnostic.source === "operation"
+                            ? "Operation"
+                            : "Structure";
+                      const location = problemNode
+                        ? `${problemNode.editor.name ?? problemNode.type} · #${problemNode.id}`
+                        : diagnostic.nodeId
+                          ? `Node unavailable · #${diagnostic.nodeId}`
+                          : (problemDocument?.name ?? diagnostic.documentId);
+                      return (
+                        <li className={`problem-row is-${diagnostic.severity}`} key={diagnostic.id}>
+                          <span className="problem-severity" title={diagnostic.severity}>
+                            {diagnostic.severity === "error" ? (
+                              <CircleAlert size={13} />
+                            ) : diagnostic.severity === "warning" ? (
+                              <TriangleAlert size={13} />
+                            ) : (
+                              <Info size={13} />
+                            )}
+                          </span>
+                          <div className="problem-copy">
+                            <strong>{diagnostic.message}</strong>
+                            <div>
+                              <code>{diagnostic.code}</code>
+                              <span>
+                                {sourceLabel} · {location}
+                                {diagnostic.property ? ` · ${diagnostic.property}` : ""}
+                                {diagnostic.operationType ? ` · ${diagnostic.operationType}` : ""}
+                                {diagnostic.operationIndex !== undefined
+                                  ? ` · step ${diagnostic.operationIndex + 1}`
+                                  : ""}
+                              </span>
+                              {diagnostic.occurrences > 1 && <em>×{diagnostic.occurrences}</em>}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className="problem-locate"
+                            disabled={!canLocate}
+                            title={canLocate ? `Locate ${location}` : "Location is unavailable"}
+                            aria-label={
+                              canLocate
+                                ? `Locate ${diagnostic.code} on ${location}`
+                                : `${diagnostic.code} location unavailable`
+                            }
+                            onClick={() => locateDiagnostic(diagnostic)}
+                          >
+                            <Eye size={12} />
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ))}
           </section>
         </main>
 
@@ -2950,9 +3222,24 @@ export function App() {
           <span>
             <RefreshCw size={11} /> 0
           </span>
-          <span>
-            <Check size={11} /> 0 problems
-          </span>
+          <button
+            type="button"
+            className={`status-problems${problemErrorCount > 0 ? " has-errors" : diagnostics.length > 0 ? " has-warnings" : ""}`}
+            aria-label={`Open Problems: ${diagnostics.length}`}
+            onClick={() => {
+              setBottomTab("problems");
+              setBottomOpen(true);
+            }}
+          >
+            {problemErrorCount > 0 ? (
+              <CircleAlert size={11} />
+            ) : diagnostics.length > 0 ? (
+              <TriangleAlert size={11} />
+            ) : (
+              <Check size={11} />
+            )}{" "}
+            {diagnostics.length} {diagnostics.length === 1 ? "problem" : "problems"}
+          </button>
         </div>
         <div>
           <span>Stage: {stageTool === "move" ? "Reorder mode" : "Project Model"}</span>

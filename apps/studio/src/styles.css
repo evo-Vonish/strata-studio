@@ -2747,6 +2747,11 @@ body.is-resizing-row * {
   color: #dce1e7;
 }
 
+.bottom-tabs button:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
 .bottom-tabs button.active::after {
   content: "";
   position: absolute;
@@ -2766,6 +2771,11 @@ body.is-resizing-row * {
   font:
     7px "DM Mono",
     monospace;
+}
+
+.bottom-tabs button span.has-errors {
+  color: #ffd0d5;
+  background: rgba(255, 88, 105, 0.18);
 }
 
 .operations-list {
@@ -2877,6 +2887,136 @@ body.is-resizing-row * {
 .problems-empty span {
   color: #626d79;
   font-size: 8px;
+}
+
+.problems-list {
+  height: calc(100% - 30px);
+  min-height: 0;
+  color: #7b8692;
+  font:
+    8px "DM Mono",
+    monospace;
+}
+
+.problems-summary {
+  min-height: 27px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid rgba(39, 46, 54, 0.7);
+  background: #11161b;
+}
+
+.problems-summary span {
+  color: #aab3bd;
+}
+
+.problems-summary em {
+  margin-left: auto;
+  overflow: hidden;
+  color: #57626e;
+  font-style: normal;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.problems-list > ul {
+  height: calc(100% - 28px);
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.problem-row {
+  min-height: 39px;
+  padding: 5px 8px;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) 30px;
+  align-items: center;
+  border-bottom: 1px solid rgba(39, 46, 54, 0.5);
+}
+
+.problem-row:hover {
+  background: #171c22;
+}
+
+.problem-severity {
+  align-self: start;
+  padding-top: 2px;
+  color: #6aa9ff;
+}
+
+.problem-row.is-warning .problem-severity {
+  color: #e9b35d;
+}
+
+.problem-row.is-error .problem-severity {
+  color: #ff7f8c;
+}
+
+.problem-copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.problem-copy > strong {
+  overflow: hidden;
+  color: #bbc3cc;
+  font-weight: 500;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.problem-copy > div {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.problem-copy code {
+  flex: 0 0 auto;
+  color: #8291a1;
+  font: inherit;
+}
+
+.problem-copy span {
+  min-width: 0;
+  overflow: hidden;
+  color: #596571;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.problem-copy em {
+  flex: 0 0 auto;
+  color: #808b97;
+  font-style: normal;
+}
+
+.problem-locate {
+  width: 26px;
+  height: 25px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 4px;
+  color: #7b8794;
+  background: transparent;
+  cursor: pointer;
+}
+
+.problem-locate:hover:not(:disabled) {
+  color: #d6dde5;
+  background: #252c34;
+}
+
+.problem-locate:disabled {
+  opacity: 0.28;
+  cursor: default;
 }
 
 .details-inspector {
@@ -4345,6 +4485,32 @@ body.is-resizing-row * {
 
 .status-bar span {
   white-space: nowrap;
+}
+
+.status-problems {
+  min-width: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  color: #7b8590;
+  background: transparent;
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.status-problems:hover {
+  color: #d0d6dd;
+}
+
+.status-problems.has-warnings {
+  color: #d5a555;
+}
+
+.status-problems.has-errors {
+  color: #ff8d99;
 }
 
 .status-ready {

@@ -328,16 +328,141 @@ export type BindInteraction = z.infer<typeof bindInteractionOperationSchema>;
 export type ProjectOperation = z.infer<typeof operationSchema>;
 export type ApplyResult = { project: StrataProject; inverse: ProjectOperation };
 export type TransactionResult = { project: StrataProject; inverse: ProjectOperation[] };
+
+/** Stable machine-readable reasons for rejected project operations. */
+export type ProjectOperationErrorCode =
+  | "INVALID_PROJECT"
+  | "INVALID_OPERATION"
+  | "UNKNOWN_DOCUMENT"
+  | "UNKNOWN_NODE"
+  | "INVALID_INDEX"
+  | "DUPLICATE_ID"
+  | "INVALID_SUBTREE"
+  | "LAST_ROOT"
+  | "CYCLE"
+  | "INVALID_TAG_TARGET"
+  | "BINDING_MISMATCH"
+  | "INVARIANT_FAILURE";
+
+export interface ProjectOperationErrorContext {
+  operationType?: string | undefined;
+  documentId?: string | undefined;
+  nodeId?: string | undefined;
+  operationIndex?: number | undefined;
+  cause?: unknown | undefined;
+}
+
+/** A structured, consumable failure produced while validating or applying an operation. */
+export class ProjectOperationError extends Error {
+  readonly code: ProjectOperationErrorCode;
+  readonly operationType?: string | undefined;
+  readonly documentId?: string | undefined;
+  readonly nodeId?: string | undefined;
+  readonly operationIndex?: number | undefined;
+
+  constructor(
+    code: ProjectOperationErrorCode,
+    message: string,
+    context: ProjectOperationErrorContext = {},
+  ) {
+    super(message, context.cause === undefined ? undefined : { cause: context.cause });
+    this.name = "ProjectOperationError";
+    this.code = code;
+    this.operationType = context.operationType;
+    this.documentId = context.documentId;
+    this.nodeId = context.nodeId;
+    this.operationIndex = context.operationIndex;
+  }
+}
+
+export function isProjectOperationError(error: unknown): error is ProjectOperationError {
+  return error instanceof ProjectOperationError;
+}
+
+function errorContextFor(operation: unknown): ProjectOperationErrorContext {
+  if (!operation || typeof operation !== "object") return {};
+  const value = operation as Record<string, unknown>;
+  const insertedNode =
+    value.node && typeof value.node === "object" ? (value.node as Record<string, unknown>) : null;
+  return {
+    ...(typeof value.type === "string" ? { operationType: value.type } : {}),
+    ...(typeof value.documentId === "string" ? { documentId: value.documentId } : {}),
+    ...(typeof value.nodeId === "string"
+      ? { nodeId: value.nodeId }
+      : typeof insertedNode?.id === "string"
+        ? { nodeId: insertedNode.id }
+        : {}),
+  };
+}
+
+function enrichOperationError(
+  error: unknown,
+  context: ProjectOperationErrorContext,
+): ProjectOperationError {
+  if (isProjectOperationError(error)) {
+    return new ProjectOperationError(error.code, error.message, {
+      cause: error.cause,
+      operationType: context.operationType ?? error.operationType,
+      documentId: context.documentId ?? error.documentId,
+      nodeId: context.nodeId ?? error.nodeId,
+      operationIndex: context.operationIndex ?? error.operationIndex,
+    });
+  }
+  return new ProjectOperationError(
+    "INVARIANT_FAILURE",
+    error instanceof Error ? error.message : "Unexpected project operation failure",
+    { ...context, cause: error },
+  );
+}
+
+function parseProjectResult(
+  input: unknown,
+  context: ProjectOperationErrorContext = {},
+): StrataProject {
+  const parsed = strataProjectSchema.safeParse(input);
+  if (parsed.success) return parsed.data;
+  throw new ProjectOperationError("INVALID_PROJECT", parsed.error.message, {
+    ...context,
+    cause: parsed.error,
+  });
+}
+
+function parseOperation(input: unknown): ProjectOperation {
+  const parsed = operationSchema.safeParse(input);
+  if (parsed.success) return parsed.data;
+  throw new ProjectOperationError("INVALID_OPERATION", parsed.error.message, {
+    ...errorContextFor(input),
+    cause: parsed.error,
+  });
+}
+
+function validateOperationResult(
+  input: StrataProject,
+  context: ProjectOperationErrorContext,
+): StrataProject {
+  const parsed = strataProjectSchema.safeParse(input);
+  if (parsed.success) return parsed.data;
+  throw new ProjectOperationError("INVARIANT_FAILURE", parsed.error.message, {
+    ...context,
+    cause: parsed.error,
+  });
+}
+
 export function parseProject(input: unknown): StrataProject {
-  return strataProjectSchema.parse(input);
+  return parseProjectResult(input);
 }
 export function safeParseProject(input: unknown) {
   return strataProjectSchema.safeParse(input);
 }
 
 function documentFor(project: StrataProject, operation: ProjectOperation): StrataDocument {
-  const document = project.documents[operation.documentId ?? project.activeDocumentId];
-  if (!document) throw new Error("Unknown operation document");
+  const documentId = operation.documentId ?? project.activeDocumentId;
+  const document = project.documents[documentId];
+  if (!document)
+    throw new ProjectOperationError("UNKNOWN_DOCUMENT", "Unknown operation document", {
+      ...errorContextFor(operation),
+      documentId,
+    });
   return document;
 }
 function updateDocument(project: StrataProject, document: StrataDocument): StrataProject {
@@ -345,12 +470,20 @@ function updateDocument(project: StrataProject, document: StrataDocument): Strat
 }
 function nodeFor(document: StrataDocument, id: string): StrataNode {
   const node = document.nodes[id];
-  if (!node) throw new Error(`Unknown node '${id}' in document '${document.id}'`);
+  if (!node)
+    throw new ProjectOperationError(
+      "UNKNOWN_NODE",
+      `Unknown node '${id}' in document '${document.id}'`,
+      {
+        documentId: document.id,
+        nodeId: id,
+      },
+    );
   return node;
 }
 function insertAt(ids: string[], id: string, index?: number): string[] {
   if (index !== undefined && index > ids.length)
-    throw new Error("Insertion index is outside the target list");
+    throw new ProjectOperationError("INVALID_INDEX", "Insertion index is outside the target list");
   const at = index ?? ids.length;
   return [...ids.slice(0, at), id, ...ids.slice(at)];
 }
@@ -392,236 +525,270 @@ function replaceNode(document: StrataDocument, node: StrataNode): StrataDocument
 }
 
 export function applyOperation(input: StrataProject, raw: ProjectOperation): ApplyResult {
-  const project = parseProject(input);
-  const operation = operationSchema.parse(raw);
-  const document = documentFor(project, operation);
-  switch (operation.type) {
-    case "InsertNode": {
-      const all = [operation.node, ...operation.descendants];
-      if (
-        all.some(
-          (node, index) =>
-            document.nodes[node.id] ||
-            all.findIndex((candidate) => candidate.id === node.id) !== index,
+  let context = errorContextFor(raw);
+  try {
+    const project = parseProjectResult(input, context);
+    const operation = parseOperation(raw);
+    const document = documentFor(project, operation);
+    context = { ...errorContextFor(operation), documentId: document.id };
+    switch (operation.type) {
+      case "InsertNode": {
+        const all = [operation.node, ...operation.descendants];
+        if (
+          all.some(
+            (node, index) =>
+              document.nodes[node.id] ||
+              all.findIndex((candidate) => candidate.id === node.id) !== index,
+          )
         )
-      )
-        throw new Error("Inserted node IDs must be new and unique");
-      const added = Object.fromEntries(all.map((node) => [node.id, node]));
-      for (const item of all) {
-        for (const child of item.children)
-          if (!added[child]) throw new Error("Inserted subtree is missing a child");
-        if (item.id === operation.node.id) {
-          if (item.parentId !== operation.parentId)
-            throw new Error("Inserted root parentId must equal parentId");
-        } else if (!item.parentId || !added[item.parentId])
-          throw new Error("Inserted descendant parent must be inside subtree");
-      }
-      let next: StrataDocument = { ...document, nodes: { ...document.nodes, ...added } };
-      if (operation.parentId === null)
-        next = {
-          ...next,
-          rootNodeIds: insertAt(next.rootNodeIds, operation.node.id, operation.index),
+          throw new ProjectOperationError(
+            "DUPLICATE_ID",
+            "Inserted node IDs must be new and unique",
+          );
+        const added = Object.fromEntries(all.map((node) => [node.id, node]));
+        for (const item of all) {
+          for (const child of item.children)
+            if (!added[child])
+              throw new ProjectOperationError(
+                "INVALID_SUBTREE",
+                "Inserted subtree is missing a child",
+              );
+          if (item.id === operation.node.id) {
+            if (item.parentId !== operation.parentId)
+              throw new ProjectOperationError(
+                "INVALID_SUBTREE",
+                "Inserted root parentId must equal parentId",
+              );
+          } else if (!item.parentId || !added[item.parentId])
+            throw new ProjectOperationError(
+              "INVALID_SUBTREE",
+              "Inserted descendant parent must be inside subtree",
+            );
+        }
+        let next: StrataDocument = { ...document, nodes: { ...document.nodes, ...added } };
+        if (operation.parentId === null)
+          next = {
+            ...next,
+            rootNodeIds: insertAt(next.rootNodeIds, operation.node.id, operation.index),
+          };
+        else {
+          const parent = nodeFor(document, operation.parentId);
+          next = replaceNode(next, {
+            ...parent,
+            children: insertAt(parent.children, operation.node.id, operation.index),
+          });
+        }
+        return {
+          project: validateOperationResult(updateDocument(project, next), context),
+          inverse: inverseMeta(operation, document.id, {
+            type: "RemoveNode",
+            nodeId: operation.node.id,
+          }),
         };
-      else {
-        const parent = nodeFor(document, operation.parentId);
-        next = replaceNode(next, {
-          ...parent,
-          children: insertAt(parent.children, operation.node.id, operation.index),
+      }
+      case "RemoveNode": {
+        const node = nodeFor(document, operation.nodeId);
+        const isRoot = node.parentId === null;
+        if (isRoot && document.rootNodeIds.length === 1)
+          throw new ProjectOperationError("LAST_ROOT", "A document must retain at least one root");
+        const removed = subtree(document, node.id);
+        const index = isRoot
+          ? document.rootNodeIds.indexOf(node.id)
+          : nodeFor(document, node.parentId as string).children.indexOf(node.id);
+        const nodes = { ...document.nodes };
+        for (const item of removed) delete nodes[item.id];
+        let next: StrataDocument = { ...document, nodes };
+        if (isRoot) next = { ...next, rootNodeIds: without(next.rootNodeIds, node.id) };
+        else {
+          const parent = nodeFor(document, node.parentId as string);
+          next = replaceNode(next, { ...parent, children: without(parent.children, node.id) });
+        }
+        return {
+          project: validateOperationResult(updateDocument(project, next), context),
+          inverse: inverseMeta(operation, document.id, {
+            type: "InsertNode",
+            node,
+            descendants: removed.slice(1),
+            parentId: node.parentId,
+            index,
+          }),
+        };
+      }
+      case "MoveNode": {
+        const node = nodeFor(document, operation.nodeId);
+        if (
+          operation.parentId &&
+          subtree(document, node.id).some((item) => item.id === operation.parentId)
+        )
+          throw new ProjectOperationError("CYCLE", "Cannot move a node into its descendant");
+        const oldParentId = node.parentId;
+        const oldList =
+          oldParentId === null ? document.rootNodeIds : nodeFor(document, oldParentId).children;
+        const oldIndex = oldList.indexOf(node.id);
+        if (
+          oldParentId === null &&
+          operation.parentId !== null &&
+          document.rootNodeIds.length === 1
+        )
+          throw new ProjectOperationError("LAST_ROOT", "A document must retain at least one root");
+        let next: StrataDocument = document;
+        if (oldParentId === null)
+          next = { ...next, rootNodeIds: without(next.rootNodeIds, node.id) };
+        else {
+          const parent = nodeFor(next, oldParentId);
+          next = replaceNode(next, { ...parent, children: without(parent.children, node.id) });
+        }
+        const target =
+          operation.parentId === null
+            ? next.rootNodeIds
+            : nodeFor(next, operation.parentId).children;
+        if (operation.parentId === null)
+          next = { ...next, rootNodeIds: insertAt(target, node.id, operation.index) };
+        else {
+          const parent = nodeFor(next, operation.parentId);
+          next = replaceNode(next, {
+            ...parent,
+            children: insertAt(target, node.id, operation.index),
+          });
+        }
+        next = replaceNode(next, { ...node, parentId: operation.parentId });
+        return {
+          project: validateOperationResult(updateDocument(project, next), context),
+          inverse: inverseMeta(operation, document.id, {
+            type: "MoveNode",
+            nodeId: node.id,
+            parentId: oldParentId,
+            index: oldIndex,
+          }),
+        };
+      }
+      case "SetTag": {
+        const node = nodeFor(document, operation.nodeId);
+        if (node.kind === "text" || node.kind === "slot")
+          throw new ProjectOperationError(
+            "INVALID_TAG_TARGET",
+            `Node kind '${node.kind}' cannot have an HTML tag`,
+          );
+        const next = replaceNode(document, {
+          ...node,
+          ...(operation.tag ? { tag: operation.tag } : { tag: undefined }),
         });
+        return {
+          project: validateOperationResult(updateDocument(project, next), context),
+          inverse: inverseMeta(operation, document.id, {
+            type: "SetTag",
+            nodeId: node.id,
+            tag: node.tag,
+          }),
+        };
       }
-      return {
-        project: parseProject(updateDocument(project, next)),
-        inverse: inverseMeta(operation, document.id, {
-          type: "RemoveNode",
-          nodeId: operation.node.id,
-        }),
-      };
-    }
-    case "RemoveNode": {
-      const node = nodeFor(document, operation.nodeId);
-      const isRoot = node.parentId === null;
-      if (isRoot && document.rootNodeIds.length === 1)
-        throw new Error("A document must retain at least one root");
-      const removed = subtree(document, node.id);
-      const index = isRoot
-        ? document.rootNodeIds.indexOf(node.id)
-        : nodeFor(document, node.parentId as string).children.indexOf(node.id);
-      const nodes = { ...document.nodes };
-      for (const item of removed) delete nodes[item.id];
-      let next: StrataDocument = { ...document, nodes };
-      if (isRoot) next = { ...next, rootNodeIds: without(next.rootNodeIds, node.id) };
-      else {
-        const parent = nodeFor(document, node.parentId as string);
-        next = replaceNode(next, { ...parent, children: without(parent.children, node.id) });
-      }
-      return {
-        project: parseProject(updateDocument(project, next)),
-        inverse: inverseMeta(operation, document.id, {
-          type: "InsertNode",
-          node,
-          descendants: removed.slice(1),
-          parentId: node.parentId,
-          index,
-        }),
-      };
-    }
-    case "MoveNode": {
-      const node = nodeFor(document, operation.nodeId);
-      if (
-        operation.parentId &&
-        subtree(document, node.id).some((item) => item.id === operation.parentId)
-      )
-        throw new Error("Cannot move a node into its descendant");
-      const oldParentId = node.parentId;
-      const oldList =
-        oldParentId === null ? document.rootNodeIds : nodeFor(document, oldParentId).children;
-      const oldIndex = oldList.indexOf(node.id);
-      if (oldParentId === null && operation.parentId !== null && document.rootNodeIds.length === 1)
-        throw new Error("A document must retain at least one root");
-      let next: StrataDocument = document;
-      if (oldParentId === null) next = { ...next, rootNodeIds: without(next.rootNodeIds, node.id) };
-      else {
-        const parent = nodeFor(next, oldParentId);
-        next = replaceNode(next, { ...parent, children: without(parent.children, node.id) });
-      }
-      const target =
-        operation.parentId === null ? next.rootNodeIds : nodeFor(next, operation.parentId).children;
-      if (operation.parentId === null)
-        next = { ...next, rootNodeIds: insertAt(target, node.id, operation.index) };
-      else {
-        const parent = nodeFor(next, operation.parentId);
-        next = replaceNode(next, {
-          ...parent,
-          children: insertAt(target, node.id, operation.index),
+      case "SetContent": {
+        const node = nodeFor(document, operation.nodeId);
+        const next = replaceNode(document, {
+          ...node,
+          ...(operation.value ? { content: operation.value } : { content: undefined }),
         });
+        return {
+          project: validateOperationResult(updateDocument(project, next), context),
+          inverse: inverseMeta(operation, document.id, {
+            type: "SetContent",
+            nodeId: node.id,
+            value: node.content,
+          }),
+        };
       }
-      next = replaceNode(next, { ...node, parentId: operation.parentId });
-      return {
-        project: parseProject(updateDocument(project, next)),
-        inverse: inverseMeta(operation, document.id, {
-          type: "MoveNode",
-          nodeId: node.id,
-          parentId: oldParentId,
-          index: oldIndex,
-        }),
-      };
+      case "SetAttribute": {
+        const node = nodeFor(document, operation.nodeId);
+        const previous = node.attributes[operation.name];
+        const next = replaceNode(document, {
+          ...node,
+          attributes: { ...node.attributes, [operation.name]: operation.value },
+        });
+        const inverse: ProjectOperation = previous
+          ? { type: "SetAttribute", nodeId: node.id, name: operation.name, value: previous }
+          : { type: "RemoveAttribute", nodeId: node.id, name: operation.name };
+        return {
+          project: validateOperationResult(updateDocument(project, next), context),
+          inverse: inverseMeta(operation, document.id, inverse),
+        };
+      }
+      case "RemoveAttribute": {
+        const node = nodeFor(document, operation.nodeId);
+        const previous = node.attributes[operation.name];
+        const attributes = { ...node.attributes };
+        delete attributes[operation.name];
+        const next = replaceNode(document, { ...node, attributes });
+        const inverse: ProjectOperation = previous
+          ? { type: "SetAttribute", nodeId: node.id, name: operation.name, value: previous }
+          : { type: "RemoveAttribute", nodeId: node.id, name: operation.name };
+        return {
+          project: validateOperationResult(updateDocument(project, next), context),
+          inverse: inverseMeta(operation, document.id, inverse),
+        };
+      }
+      case "SetStyle": {
+        const node = nodeFor(document, operation.nodeId);
+        const ruleIndex = node.styleRules.findIndex((rule) =>
+          sameScope(rule.scope, operation.scope),
+        );
+        const previous =
+          ruleIndex < 0 ? undefined : node.styleRules[ruleIndex]?.properties[operation.name];
+        const properties = { ...(ruleIndex < 0 ? {} : node.styleRules[ruleIndex]?.properties) };
+        if (operation.value) properties[operation.name] = operation.value;
+        else delete properties[operation.name];
+        const styleRules = [...node.styleRules];
+        if (Object.keys(properties).length === 0) {
+          if (ruleIndex >= 0) styleRules.splice(ruleIndex, 1);
+        } else if (ruleIndex >= 0) styleRules[ruleIndex] = { scope: operation.scope, properties };
+        else styleRules.push({ scope: operation.scope, properties });
+        const next = replaceNode(document, { ...node, styleRules });
+        return {
+          project: validateOperationResult(updateDocument(project, next), context),
+          inverse: inverseMeta(operation, document.id, {
+            type: "SetStyle",
+            nodeId: node.id,
+            scope: operation.scope,
+            name: operation.name,
+            value: previous,
+          }),
+        };
+      }
+      case "SetAccessibility": {
+        const node = nodeFor(document, operation.nodeId);
+        const next = replaceNode(document, { ...node, accessibility: operation.accessibility });
+        return {
+          project: validateOperationResult(updateDocument(project, next), context),
+          inverse: inverseMeta(operation, document.id, {
+            type: "SetAccessibility",
+            nodeId: node.id,
+            accessibility: node.accessibility,
+          }),
+        };
+      }
+      case "BindInteraction": {
+        const node = nodeFor(document, operation.nodeId);
+        if (operation.binding && operation.binding.event !== operation.event)
+          throw new ProjectOperationError(
+            "BINDING_MISMATCH",
+            "Binding event must equal operation event",
+          );
+        const previous = node.interactions.find((item) => item.event === operation.event);
+        const interactions = node.interactions.filter((item) => item.event !== operation.event);
+        if (operation.binding) interactions.push(operation.binding);
+        const next = replaceNode(document, { ...node, interactions });
+        return {
+          project: validateOperationResult(updateDocument(project, next), context),
+          inverse: inverseMeta(operation, document.id, {
+            type: "BindInteraction",
+            nodeId: node.id,
+            event: operation.event,
+            binding: previous,
+          }),
+        };
+      }
     }
-    case "SetTag": {
-      const node = nodeFor(document, operation.nodeId);
-      if (node.kind === "text" || node.kind === "slot")
-        throw new Error(`Node kind '${node.kind}' cannot have an HTML tag`);
-      const next = replaceNode(document, {
-        ...node,
-        ...(operation.tag ? { tag: operation.tag } : { tag: undefined }),
-      });
-      return {
-        project: parseProject(updateDocument(project, next)),
-        inverse: inverseMeta(operation, document.id, {
-          type: "SetTag",
-          nodeId: node.id,
-          tag: node.tag,
-        }),
-      };
-    }
-    case "SetContent": {
-      const node = nodeFor(document, operation.nodeId);
-      const next = replaceNode(document, {
-        ...node,
-        ...(operation.value ? { content: operation.value } : { content: undefined }),
-      });
-      return {
-        project: parseProject(updateDocument(project, next)),
-        inverse: inverseMeta(operation, document.id, {
-          type: "SetContent",
-          nodeId: node.id,
-          value: node.content,
-        }),
-      };
-    }
-    case "SetAttribute": {
-      const node = nodeFor(document, operation.nodeId);
-      const previous = node.attributes[operation.name];
-      const next = replaceNode(document, {
-        ...node,
-        attributes: { ...node.attributes, [operation.name]: operation.value },
-      });
-      const inverse: ProjectOperation = previous
-        ? { type: "SetAttribute", nodeId: node.id, name: operation.name, value: previous }
-        : { type: "RemoveAttribute", nodeId: node.id, name: operation.name };
-      return {
-        project: parseProject(updateDocument(project, next)),
-        inverse: inverseMeta(operation, document.id, inverse),
-      };
-    }
-    case "RemoveAttribute": {
-      const node = nodeFor(document, operation.nodeId);
-      const previous = node.attributes[operation.name];
-      const attributes = { ...node.attributes };
-      delete attributes[operation.name];
-      const next = replaceNode(document, { ...node, attributes });
-      const inverse: ProjectOperation = previous
-        ? { type: "SetAttribute", nodeId: node.id, name: operation.name, value: previous }
-        : { type: "RemoveAttribute", nodeId: node.id, name: operation.name };
-      return {
-        project: parseProject(updateDocument(project, next)),
-        inverse: inverseMeta(operation, document.id, inverse),
-      };
-    }
-    case "SetStyle": {
-      const node = nodeFor(document, operation.nodeId);
-      const ruleIndex = node.styleRules.findIndex((rule) => sameScope(rule.scope, operation.scope));
-      const previous =
-        ruleIndex < 0 ? undefined : node.styleRules[ruleIndex]?.properties[operation.name];
-      const properties = { ...(ruleIndex < 0 ? {} : node.styleRules[ruleIndex]?.properties) };
-      if (operation.value) properties[operation.name] = operation.value;
-      else delete properties[operation.name];
-      const styleRules = [...node.styleRules];
-      if (Object.keys(properties).length === 0) {
-        if (ruleIndex >= 0) styleRules.splice(ruleIndex, 1);
-      } else if (ruleIndex >= 0) styleRules[ruleIndex] = { scope: operation.scope, properties };
-      else styleRules.push({ scope: operation.scope, properties });
-      const next = replaceNode(document, { ...node, styleRules });
-      return {
-        project: parseProject(updateDocument(project, next)),
-        inverse: inverseMeta(operation, document.id, {
-          type: "SetStyle",
-          nodeId: node.id,
-          scope: operation.scope,
-          name: operation.name,
-          value: previous,
-        }),
-      };
-    }
-    case "SetAccessibility": {
-      const node = nodeFor(document, operation.nodeId);
-      const next = replaceNode(document, { ...node, accessibility: operation.accessibility });
-      return {
-        project: parseProject(updateDocument(project, next)),
-        inverse: inverseMeta(operation, document.id, {
-          type: "SetAccessibility",
-          nodeId: node.id,
-          accessibility: node.accessibility,
-        }),
-      };
-    }
-    case "BindInteraction": {
-      const node = nodeFor(document, operation.nodeId);
-      if (operation.binding && operation.binding.event !== operation.event)
-        throw new Error("Binding event must equal operation event");
-      const previous = node.interactions.find((item) => item.event === operation.event);
-      const interactions = node.interactions.filter((item) => item.event !== operation.event);
-      if (operation.binding) interactions.push(operation.binding);
-      const next = replaceNode(document, { ...node, interactions });
-      return {
-        project: parseProject(updateDocument(project, next)),
-        inverse: inverseMeta(operation, document.id, {
-          type: "BindInteraction",
-          nodeId: node.id,
-          event: operation.event,
-          binding: previous,
-        }),
-      };
-    }
+  } catch (error) {
+    throw enrichOperationError(error, context);
   }
 }
 export function applyTransaction(
@@ -630,10 +797,14 @@ export function applyTransaction(
 ): TransactionResult {
   let next = project;
   const inverse: ProjectOperation[] = [];
-  for (const operation of operations) {
-    const result = applyOperation(next, operation);
-    next = result.project;
-    inverse.unshift(result.inverse);
+  for (const [operationIndex, operation] of operations.entries()) {
+    try {
+      const result = applyOperation(next, operation);
+      next = result.project;
+      inverse.unshift(result.inverse);
+    } catch (error) {
+      throw enrichOperationError(error, { ...errorContextFor(operation), operationIndex });
+    }
   }
   return { project: next, inverse };
 }

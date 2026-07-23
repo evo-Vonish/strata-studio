@@ -129,10 +129,17 @@ live project unchanged.
 
 ## Error model
 
-M1.1 rejects malformed operations with Zod validation errors or actionable reducer errors. Missing
-targets, duplicate IDs, invalid indices, cycles, and invariant violations never produce a partial
-result. Stable error codes and the failing transaction index are required before the Problems panel
-or remote Agent bridge consumes this API.
+M1.1 rejects malformed operations with `ProjectOperationError` or actionable reducer errors.
+Missing targets, duplicate IDs, invalid indices, cycles, and invariant violations never produce a
+partial result. The stable codes are `INVALID_PROJECT`, `INVALID_OPERATION`, `UNKNOWN_DOCUMENT`,
+`UNKNOWN_NODE`, `INVALID_INDEX`, `DUPLICATE_ID`, `INVALID_SUBTREE`, `LAST_ROOT`, `CYCLE`,
+`INVALID_TAG_TARGET`, `BINDING_MISMATCH`, and `INVARIANT_FAILURE`.
+
+Each error may include `operationType`, resolved `documentId`, and `nodeId`. `applyTransaction`
+enriches the first failure with its zero-based `operationIndex`; it throws instead of returning the
+intermediate project. The Studio converts that structured context to a session Problems record, so
+failure reporting does not alter durable project state or history. A successful transaction clears
+the current session failures. See [Studio Diagnostics v0.1](diagnostics-v0.1.md).
 
 Do not use silent no-ops for malformed operations. An explicitly idempotent future operation may
 declare that behavior in its contract.

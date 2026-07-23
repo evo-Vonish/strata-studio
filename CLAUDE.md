@@ -72,6 +72,12 @@ sources of truth.
   Box-only; selection stays on the moved node and exact Undo/Redo uses the same history envelope.
   Escape, pointer cancellation/capture loss, frame blur, a tool switch, and leaving Stage cancel
   without creating history.
+- **M1.2 diagnostics:** Problems now merges DOM Runtime warnings with session-only operation and
+  structure failures. It shows counts, stable codes, source/location metadata, and active-document
+  node Locate controls. Successful transactions clear session failures; runtime warnings resolve
+  automatically when the Project Model recompiles without them. `ProjectOperationError` supplies
+  stable codes and the zero-based failing transaction operation index without exposing partial
+  history. Studio compiles once and wraps that compilation in the inert Stage shell.
 
 The active editor data path is:
 
@@ -86,16 +92,16 @@ Inspector / Stage / Agent intent
 
 ### Active next slice
 
-With conservative Stage reorder complete, finish diagnostics and integrity work before Blueprint
+With diagnostics and conservative Stage reorder complete, finish integrity work before Blueprint
 execution:
 
-1. route reducer/runtime failures into Problems without corrupting history;
-2. guard deletion against external node references and handle authored DOM IDs during duplicate;
-3. define an explicit migration/diagnostic path for imported documents without a valid Box page
+1. guard deletion against external node references and handle authored DOM IDs and IDREFs during
+   duplicate;
+2. define an explicit migration/diagnostic path for imported documents without a valid Box page
    root;
-4. extend Stage placement from its current vertical semantic baseline to Flex/Grid axis-aware
+3. extend Stage placement from its current vertical semantic baseline to Flex/Grid axis-aware
    feedback only after those invariants are covered;
-5. then begin `Button Click -> Set Text` in the minimal Blueprint workspace.
+4. then begin `Button Click -> Set Text` in the minimal Blueprint workspace.
 
 ## Important implementation boundaries
 
@@ -116,9 +122,10 @@ execution:
 - Hierarchy structure shortcuts run only while the hierarchy/tree toolbar owns focus; Inspector and
   search inputs retain native editing behavior.
 - Stage reorder currently uses explicit mode and conservative vertical semantics; Flex/Grid
-  axis-aware placement, auto-scroll, and drag ghosts are not complete yet. Problems/diagnostics,
-  external-reference repair, imported-root migration, and runtime Blueprint execution are also not
-  complete yet.
+  axis-aware placement, auto-scroll, and drag ghosts are not complete yet. Problems covers runtime
+  warnings plus session operation/structure failures, but external-reference repair, DOM IDREF
+  validation, imported-root migration, cross-document/property-level diagnostic location, and
+  runtime Blueprint execution are not complete yet.
 
 ## Repository map
 

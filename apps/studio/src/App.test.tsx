@@ -104,6 +104,13 @@ describe("Strata Studio model integration", () => {
     await act(async () => root.render(<App />));
   });
 
+  const remountWithProject = async (project: StrataProject) => {
+    await act(async () => root.unmount());
+    window.localStorage.setItem("strata-studio.project.v0.1", JSON.stringify(project));
+    root = createRoot(container);
+    await act(async () => root.render(<App />));
+  };
+
   afterEach(async () => {
     await act(async () => root.unmount());
     container.remove();
@@ -116,6 +123,57 @@ describe("Strata Studio model integration", () => {
     expect(frame?.srcdoc).toContain('data-strata-node-id="primary-action"');
     expect(frame?.srcdoc).toContain("Design the interface. Program the behavior.");
     expect(container.textContent).toContain("11 nodes · compiled stage");
+  });
+
+  it("shows runtime diagnostics in Problems, locates their node, and resolves them from the model", async () => {
+    const input = requiredStoredProject();
+    const signalImage = homeDocument(input).nodes["signal-image"];
+    if (!signalImage) throw new Error("Signal image fixture is missing");
+    signalImage.attributes.src = { kind: "literal", value: "javascript:blocked" };
+    await remountWithProject(input);
+
+    const status = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Open Problems: 1"]',
+    );
+    if (!status) throw new Error("Problems status did not receive the runtime warning");
+    expect(container.querySelector<HTMLIFrameElement>(".model-stage-frame")?.srcdoc).not.toContain(
+      "javascript:blocked",
+    );
+    await act(async () => status.click());
+    const problem = container.querySelector<HTMLElement>(".problem-row");
+    expect(problem?.textContent).toContain("BLOCKED_URL");
+    expect(problem?.textContent).toContain("Signal image");
+    expect(problem?.textContent).toContain("src");
+
+    const locate = problem?.querySelector<HTMLButtonElement>(".problem-locate");
+    if (!locate) throw new Error("Problem location action is missing");
+    await act(async () => locate.click());
+    expect(selectedLayer(container).textContent).toContain("Signal image");
+
+    const contentTab = [
+      ...container.querySelectorAll<HTMLButtonElement>(".inspector-tabbar button"),
+    ].find((button) => button.textContent === "Content");
+    if (!contentTab) throw new Error("Content inspector tab is missing");
+    await act(async () => contentTab.click());
+    const source = propertyField(container, "imageSource").querySelector<HTMLInputElement>("input");
+    if (!source) throw new Error("Image source field is missing");
+    await act(async () => {
+      source.focus();
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      if (!valueSetter) throw new Error("Native input setter is missing");
+      valueSetter.call(source, "signal-artwork");
+      source.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => source.blur());
+
+    expect(
+      container.querySelector<HTMLButtonElement>('button[aria-label="Open Problems: 0"]'),
+    ).not.toBeNull();
+    expect(container.querySelector(".problem-row")).toBeNull();
+    expect(homeDocument(requiredStoredProject()).nodes["signal-image"]?.attributes.src).toEqual({
+      kind: "asset",
+      assetId: "signal-artwork",
+    });
   });
 
   it("writes schema edits to the project and undoes them", async () => {
@@ -401,6 +459,98 @@ describe("Strata Studio model integration", () => {
       "headline",
       "lede",
     ]);
+  });
+
+  it("clears session Problems without dismissing runtime warnings", async () => {
+    const input = requiredStoredProject();
+    const signalImage = homeDocument(input).nodes["signal-image"];
+    if (!signalImage) throw new Error("Signal image fixture is missing");
+    signalImage.attributes.src = { kind: "literal", value: "javascript:blocked" };
+    await remountWithProject(input);
+
+    const reorder = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Reorder elements (M)"]',
+    );
+    const frame = container.querySelector<HTMLIFrameElement>(".model-stage-frame");
+    const undo = container.querySelector<HTMLButtonElement>('button[aria-label="Undo"]');
+    if (!reorder || !frame?.contentDocument || !undo)
+      throw new Error("Stage diagnostics fixture is incomplete");
+    await act(async () => reorder.click());
+
+    const runtime = frame.contentDocument;
+    runtime.body.innerHTML = `
+      <main data-strata-node-id="page-root">
+        <section data-strata-node-id="hero">
+          <span data-strata-node-id="eyebrow">Eyebrow</span>
+        </section>
+      </main>
+    `;
+    const source = runtime.querySelector<HTMLElement>('[data-strata-node-id="hero"]');
+    const target = runtime.querySelector<HTMLElement>('[data-strata-node-id="eyebrow"]');
+    if (!source || !target) throw new Error("Stage diagnostics nodes are missing");
+    setBounds(source, 180, 140);
+    setBounds(target, 100, 40);
+    Object.defineProperty(runtime, "elementsFromPoint", {
+      configurable: true,
+      value: () => [target],
+    });
+    await act(async () => frame.dispatchEvent(new Event("load")));
+
+    await act(async () => {
+      source.dispatchEvent(pointerEvent("pointerdown", { clientX: 40, clientY: 200 }));
+      source.dispatchEvent(pointerEvent("pointermove", { clientX: 42, clientY: 102 }));
+    });
+    expect(container.querySelector(".stage-drop-target.is-unavailable")).not.toBeNull();
+    await act(async () =>
+      source.dispatchEvent(pointerEvent("pointerup", { clientX: 42, clientY: 102 })),
+    );
+
+    expect(homeDocument(requiredStoredProject()).nodes["page-root"]?.children).toEqual([
+      "hero",
+      "visual-card",
+      "form-row",
+    ]);
+    expect(undo.disabled).toBe(true);
+    expect(
+      container.querySelector<HTMLButtonElement>('button[aria-label="Open Problems: 2"]'),
+    ).not.toBeNull();
+    const problemsTab = [
+      ...container.querySelectorAll<HTMLButtonElement>(".bottom-tabs button"),
+    ].find((button) => button.textContent?.includes("Problems"));
+    if (!problemsTab) throw new Error("Problems tab is missing");
+    await act(async () => problemsTab.click());
+    expect(container.querySelector(".problem-row")?.textContent).toContain(
+      "STAGE_TARGET_IN_DRAGGED_SUBTREE",
+    );
+
+    const clear = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Clear session problems"]',
+    );
+    if (!clear) throw new Error("Clear session Problems action is missing");
+    await act(async () => clear.click());
+    expect(
+      container.querySelector<HTMLButtonElement>('button[aria-label="Open Problems: 1"]'),
+    ).not.toBeNull();
+    expect(container.querySelector(".problem-row")?.textContent).toContain("BLOCKED_URL");
+    expect(container.textContent).not.toContain("STAGE_TARGET_IN_DRAGGED_SUBTREE");
+
+    const primaryAction = layerButton(container, "Primary action");
+    await act(async () => primaryAction.click());
+    primaryAction.focus();
+    await act(async () =>
+      primaryAction.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "ArrowUp",
+          altKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    );
+    expect(
+      container.querySelector<HTMLButtonElement>('button[aria-label="Open Problems: 1"]'),
+    ).not.toBeNull();
+    expect(container.querySelector(".problem-row")?.textContent).toContain("BLOCKED_URL");
   });
 
   it("cancels an active Stage reorder when pointer capture is lost or Stage closes", async () => {

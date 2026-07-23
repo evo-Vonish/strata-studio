@@ -39,6 +39,10 @@ export interface StageDocumentOptions extends CompileOptions {
   title?: string;
 }
 
+export interface StageShellOptions {
+  title?: string;
+}
+
 const VOID_ELEMENTS = new Set([
   "area",
   "base",
@@ -450,6 +454,17 @@ export function buildStageDocument(
   options: StageDocumentOptions = {},
 ): string {
   const compiled = compileDocument(project, documentId, options);
+  return buildStageDocumentFromCompiled(compiled, options);
+}
+
+/**
+ * Wraps an existing deterministic compilation in the inert Stage shell. Studio callers use this
+ * entry point when they also need the compilation warnings, avoiding a second compiler pass.
+ */
+export function buildStageDocumentFromCompiled(
+  compiled: CompiledDocument,
+  options: StageShellOptions = {},
+): string {
   const title = escapeHtml(options.title ?? "Strata Stage");
   const csp =
     "default-src 'none'; img-src data: blob: http: https:; media-src data: blob: http: https:; font-src data: blob: http: https:; style-src 'unsafe-inline'; connect-src 'none'; script-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
