@@ -1,5 +1,7 @@
 # Strata Studio
 
+Updated: 2026-07-23
+
 Strata Studio is an AI-native visual IDE for interactive web experiences. It combines direct
 manipulation, visual programming, real source code, and a project-aware Agent without replacing
 the web platform underneath.
@@ -38,11 +40,17 @@ Four implementation checkpoints are present in the repository:
   Store with undo/redo; a model-derived hierarchy; and schema-generated Design/Content controls
   wired to the same operation protocol used by the Agent prototype. Structural authoring now adds a
   searchable five-primitive palette, a protected page-root container, move/indent/outdent commands,
-  deep duplicate, subtree delete, and selection-aware history.
+  deep duplicate, subtree delete, selection-aware history, and an explicit Stage Reorder mode. The
+  latter uses Pointer Events with a 5px mouse or 8px touch/pen threshold, previews
+  Before/Inside/After placement, and commits one latest-model-validated `MoveNode`; only Box nodes
+  accept Inside placement and Undo/Redo restores the exact move and selection.
 
 The Stage is now a projection of the Project Model rather than an independently mutable React DOM
-tree. The remaining M1.2 work is Stage drag/drop placement feedback, stronger diagnostics, imported
-page-root migration, and reference-integrity handling for delete/duplicate.
+tree. Reorder is deliberately conservative: it uses vertical semantic drop feedback, parent
+highlights, sibling insertion lines, and disabled-target feedback; Escape, pointer cancellation or
+capture loss, blur, a tool switch, and leaving Stage cancel without a transaction. Remaining M1.2 work is Problems diagnostics,
+reference-integrity handling for delete/duplicate, imported page-root migration, and later
+Flex/Grid axis-aware placement, auto-scroll, and drag ghosts.
 
 ## E0 Element Extractor
 
@@ -124,12 +132,13 @@ No upstream repository is vendored into this repository. Research clones live ou
 
 ## Next vertical slice
 
-The next slice continues structural Stage authoring before Blueprint execution:
+The next slice completes diagnostics and integrity work before Blueprint execution:
 
-1. add layout-aware Stage insertion previews, parent highlighting, and between-sibling drop targets;
-2. expose operation and runtime failures in Problems without corrupting history;
-3. diagnose external node references before subtree deletion and authored DOM IDs before duplicate;
-4. define explicit migration for imported documents whose first root is not a valid Box container;
+1. expose operation and runtime failures in Problems without corrupting history;
+2. diagnose external node references before subtree deletion and authored DOM IDs before duplicate;
+3. define explicit migration for imported documents whose first root is not a valid Box container;
+4. evolve the Stage's current vertical placement feedback to Flex/Grid axis-aware feedback only
+   after those invariants are covered;
 5. then begin `Button Click -> Set Text` in the minimal Blueprint workspace.
 
 This slice closes the remaining M1.2 structural gap while keeping every edit on the Project Model.

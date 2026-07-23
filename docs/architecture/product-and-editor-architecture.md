@@ -1,6 +1,6 @@
 # Product and editor architecture
 
-Date: 2026-07-22
+Date: 2026-07-23
 
 Status: accepted product direction; implementation pending unless marked current
 
@@ -11,13 +11,18 @@ property-editing core is also current: the Project Model now drives a determinis
 Runtime, stable Stage selection, the hierarchy, schema-generated Inspector controls, responsive and
 state scopes, persistence, and exact transaction undo/redo.
 
-M1.2 is not yet complete. Two structural authoring slices are current: the Registry-backed Add
-Element panel creates five primitives through `InsertNode`, while the hierarchy offers canonical
-move, indent, outdent, deep duplicate, and subtree delete commands. The first document root is now a
-protected Box page container, and editor history restores structural selection as well as project
-state. Remaining work is layout-aware Stage drag/drop feedback, imported-root migration,
-reference-integrity checks, and user-facing Problems diagnostics. The minimal Blueprint runtime
-begins only after this structural loop is reliable.
+M1.2 is not yet complete. Three structural authoring slices are current: the Registry-backed Add
+Element panel creates five primitives through `InsertNode`; the hierarchy offers canonical move,
+indent, outdent, deep duplicate, and subtree delete commands; and explicit Stage Reorder mode uses
+Pointer Events to plan Before/Inside/After placements. The first document root is now a protected
+Box page container, and editor history restores structural selection as well as project state.
+Reorder begins after a 5px mouse or 8px touch/pen movement threshold, previews parent/container,
+insertion-line, and disabled feedback, and revalidates the latest Project Model before committing a
+single `MoveNode`. Inside is Box-only; cancellation on Escape, pointer cancellation or capture
+loss, blur, tool switch, or leaving Stage does not create history. Current feedback is deliberately vertical-semantic rather than
+Flex/Grid-axis-aware. Remaining work is Problems diagnostics, imported-root migration,
+reference-integrity checks, and later layout-aware refinement. The minimal Blueprint runtime begins
+only after this structural loop is reliable.
 
 ## Product statement
 
@@ -115,6 +120,15 @@ Insertion is structural rather than merely coordinate-based. Drag feedback must 
 - whether the parent accepts the child;
 - a preview of the resulting layout.
 
+The current Stage reorder baseline is narrower and explicit: Reorder mode is separate from Select
+and Pan, uses editor-owned overlays rather than mutating the runtime DOM, and represents each drop
+as Before, Inside, or After. A parent/container highlight communicates Inside, a sibling insertion
+line communicates Before/After, and invalid placements are visibly disabled. It uses a conservative
+vertical interpretation of the pointer; Flex/Grid main-axis detection, auto-scroll, drag ghosts,
+and richer layout prediction remain later work. On pointer-up, the placement is recomputed from the
+latest Project Model and, if valid, emitted as one reversible `MoveNode` transaction that retains
+selection.
+
 ### Interaction modes
 
 The Stage requires an explicit state machine:
@@ -124,6 +138,7 @@ The Stage requires an explicit state machine:
 | `idle` | Navigate the editor without an active gesture |
 | `insert` | Choose and place a node |
 | `selected` | Inspect one or more nodes |
+| `reorder` | Explicitly move an existing node through Before/Inside/After placement previews |
 | `direct-edit` | Edit text or other inline content |
 | `transform` | Resize, position, rotate, or change layout placement |
 | `pan` | Move the editor viewport |

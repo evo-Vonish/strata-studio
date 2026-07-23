@@ -1,5 +1,7 @@
 # M1 Unified Authoring Loop acceptance
 
+Last updated: 2026-07-23
+
 Status: milestone contract
 
 Related specifications:
@@ -36,8 +38,13 @@ editing, local persistence, Agent transaction example, exact undo/redo, and the 
 flow are implemented. Five primitives can now be searched and inserted Before/Inside/After through
 canonical transactions. A protected page-root sentinel and hierarchy commands now cover canonical
 move up/down, indent/outdent, deep duplicate, subtree delete, scoped keyboard actions, and
-selection-aware history. Stage drag/drop placement, imported-root migration, reference-integrity
-checks, and user-facing operation diagnostics remain before this gate is complete.
+selection-aware history. Explicit Stage Reorder mode now uses Pointer Events with a 5px mouse or 8px
+touch/pen activation threshold, valid/disabled Before/Inside/After previews, Box-only Inside
+placement, and one latest-model-validated `MoveNode` on pointer-up. It retains selection and exact
+Undo/Redo; Escape, pointer cancellation or capture loss, blur, tool changes, and leaving Stage
+cancel without a transaction.
+Problems integration, imported-root migration, reference-integrity checks, and richer Flex/Grid
+axis-aware placement remain before this gate is complete.
 
 - create an empty page and insert the five initial elements;
 - select through a stable Strata node ID;
@@ -46,6 +53,9 @@ checks, and user-facing operation diagnostics remain before this gate is complet
   applicable element fields;
 - render the project inside a sandboxed runtime frame;
 - express Stage and Inspector edits as transactions;
+- reorder an existing Stage node in explicit Reorder mode with a Before, Inside, or After preview;
+  reject invalid targets without changing project or history; commit the valid drop as one
+  reversible `MoveNode` while retaining selection;
 - preserve state and breakpoint scopes independently;
 - save and reload the project without semantic change.
 

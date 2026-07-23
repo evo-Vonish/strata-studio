@@ -45,6 +45,41 @@ function selectedLayer(container: Element): HTMLButtonElement {
   return button;
 }
 
+function pointerEvent(
+  type: string,
+  options: { clientX: number; clientY: number; pointerId?: number; pointerType?: string },
+): MouseEvent {
+  const event = new MouseEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    button: 0,
+    clientX: options.clientX,
+    clientY: options.clientY,
+  });
+  Object.defineProperties(event, {
+    pointerId: { value: options.pointerId ?? 1 },
+    pointerType: { value: options.pointerType ?? "mouse" },
+  });
+  return event;
+}
+
+function setBounds(element: Element, top: number, height: number, left = 20, width = 240): void {
+  Object.defineProperty(element, "getBoundingClientRect", {
+    configurable: true,
+    value: () => ({
+      x: left,
+      y: top,
+      top,
+      right: left + width,
+      bottom: top + height,
+      left,
+      width,
+      height,
+      toJSON: () => ({}),
+    }),
+  });
+}
+
 function storedWidth(): number | undefined {
   const project = storedProject();
   if (!project) return undefined;
@@ -298,6 +333,135 @@ describe("Strata Studio model integration", () => {
     await act(async () => redo.click());
     expect(homeDocument(requiredStoredProject()).nodes[duplicateId]).toBeUndefined();
     expect(selectedLayer(container).textContent).toContain("Primary action");
+  });
+
+  it("reorders an element on the Stage with a preview and exact undo/redo", async () => {
+    const reorder = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Reorder elements (M)"]',
+    );
+    const frame = container.querySelector<HTMLIFrameElement>(".model-stage-frame");
+    if (!reorder || !frame?.contentDocument) throw new Error("Stage reorder controls are missing");
+    await act(async () => reorder.click());
+    expect(reorder.getAttribute("aria-pressed")).toBe("true");
+
+    const runtime = frame.contentDocument;
+    runtime.body.innerHTML = `
+      <main data-strata-node-id="page-root">
+        <section data-strata-node-id="hero">
+          <span data-strata-node-id="eyebrow">Eyebrow</span>
+          <button data-strata-node-id="primary-action">Action</button>
+        </section>
+      </main>
+    `;
+    const source = runtime.querySelector<HTMLElement>('[data-strata-node-id="primary-action"]');
+    const target = runtime.querySelector<HTMLElement>('[data-strata-node-id="eyebrow"]');
+    if (!source || !target) throw new Error("Stage reorder fixture is incomplete");
+    setBounds(source, 240, 40);
+    setBounds(target, 100, 100);
+    Object.defineProperty(runtime, "elementsFromPoint", {
+      configurable: true,
+      value: () => [target],
+    });
+    await act(async () => frame.dispatchEvent(new Event("load")));
+
+    await act(async () => {
+      source.dispatchEvent(pointerEvent("pointerdown", { clientX: 40, clientY: 250 }));
+      source.dispatchEvent(pointerEvent("pointermove", { clientX: 42, clientY: 110 }));
+    });
+    expect(container.querySelector(".stage-drop-line.is-ready")).not.toBeNull();
+    expect(container.textContent).toContain("Move “Primary action” before “Eyebrow”");
+
+    await act(async () =>
+      source.dispatchEvent(pointerEvent("pointerup", { clientX: 42, clientY: 110 })),
+    );
+    expect(homeDocument(requiredStoredProject()).nodes.hero?.children).toEqual([
+      "primary-action",
+      "eyebrow",
+      "headline",
+      "lede",
+    ]);
+    expect(selectedLayer(container).textContent).toContain("Primary action");
+    expect(container.querySelector(".stage-drop-preview")).toBeNull();
+
+    const undo = container.querySelector<HTMLButtonElement>('button[aria-label="Undo"]');
+    const redo = container.querySelector<HTMLButtonElement>('button[aria-label="Redo"]');
+    if (!undo || !redo) throw new Error("History controls are missing");
+    await act(async () => undo.click());
+    expect(homeDocument(requiredStoredProject()).nodes.hero?.children).toEqual([
+      "eyebrow",
+      "headline",
+      "lede",
+      "primary-action",
+    ]);
+    expect(selectedLayer(container).textContent).toContain("Primary action");
+    await act(async () => redo.click());
+    expect(homeDocument(requiredStoredProject()).nodes.hero?.children).toEqual([
+      "primary-action",
+      "eyebrow",
+      "headline",
+      "lede",
+    ]);
+  });
+
+  it("cancels an active Stage reorder when pointer capture is lost or Stage closes", async () => {
+    const reorder = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Reorder elements (M)"]',
+    );
+    const frame = container.querySelector<HTMLIFrameElement>(".model-stage-frame");
+    if (!reorder || !frame?.contentDocument) throw new Error("Stage reorder controls are missing");
+    await act(async () => reorder.click());
+
+    const runtime = frame.contentDocument;
+    runtime.body.innerHTML = `
+      <main data-strata-node-id="page-root">
+        <section data-strata-node-id="hero">
+          <span data-strata-node-id="eyebrow">Eyebrow</span>
+          <button data-strata-node-id="primary-action">Action</button>
+        </section>
+      </main>
+    `;
+    const source = runtime.querySelector<HTMLElement>('[data-strata-node-id="primary-action"]');
+    const target = runtime.querySelector<HTMLElement>('[data-strata-node-id="eyebrow"]');
+    if (!source || !target) throw new Error("Stage reorder fixture is incomplete");
+    setBounds(source, 240, 40);
+    setBounds(target, 100, 100);
+    Object.defineProperty(runtime, "elementsFromPoint", {
+      configurable: true,
+      value: () => [target],
+    });
+    await act(async () => frame.dispatchEvent(new Event("load")));
+
+    const originalChildren = ["eyebrow", "headline", "lede", "primary-action"];
+    await act(async () => {
+      source.dispatchEvent(pointerEvent("pointerdown", { clientX: 40, clientY: 250 }));
+      source.dispatchEvent(pointerEvent("pointermove", { clientX: 42, clientY: 110 }));
+    });
+    expect(container.querySelector(".stage-drop-preview")).not.toBeNull();
+    await act(async () =>
+      source.dispatchEvent(pointerEvent("lostpointercapture", { clientX: 42, clientY: 110 })),
+    );
+    expect(container.querySelector(".stage-drop-preview")).toBeNull();
+    await act(async () =>
+      source.dispatchEvent(pointerEvent("pointerup", { clientX: 42, clientY: 110 })),
+    );
+    expect(homeDocument(requiredStoredProject()).nodes.hero?.children).toEqual(originalChildren);
+
+    await act(async () => {
+      source.dispatchEvent(pointerEvent("pointerdown", { clientX: 40, clientY: 250 }));
+      source.dispatchEvent(pointerEvent("pointermove", { clientX: 42, clientY: 110 }));
+    });
+    expect(container.querySelector(".stage-drop-preview")).not.toBeNull();
+    const blueprint = [
+      ...container.querySelectorAll<HTMLButtonElement>(".workspace-switcher button"),
+    ].find((button) => button.textContent?.includes("Blueprint"));
+    if (!blueprint) throw new Error("Blueprint workspace control is missing");
+    await act(async () => blueprint.click());
+    expect(container.querySelector(".stage-drop-preview")).toBeNull();
+    expect(container.querySelector(".model-stage-frame")).toBeNull();
+    await act(async () =>
+      source.dispatchEvent(pointerEvent("pointerup", { clientX: 42, clientY: 110 })),
+    );
+    expect(homeDocument(requiredStoredProject()).nodes.hero?.children).toEqual(originalChildren);
   });
 
   it("opens Add Element from the keyboard command palette without hijacking text input", async () => {

@@ -1,6 +1,8 @@
 # Stage Structure Authoring v0.1
 
-Status: insertion and hierarchy-command slices implemented
+Last updated: 2026-07-23
+
+Status: insertion, hierarchy-command, and explicit Stage reorder slices implemented
 
 This specification defines how the Studio creates, places, reorders, reparents, duplicates, and
 deletes the five initial primitive elements without making the rendered DOM authoritative.
@@ -133,6 +135,37 @@ reference scan must block or warn when an outside node points into the deleted s
 delete is structurally reversible but does not claim automatic repair of arbitrary imported
 cross-subtree references.
 
+## Explicit Stage reorder
+
+Stage reorder is an explicit **Reorder** mode, separate from Select and Pan, rather than a
+free-form drag gesture in the default selection mode. It uses Pointer Events inside the sandboxed
+Stage frame and editor-owned overlays outside it; it never treats the rendered DOM as authored
+state or inserts a temporary node into the runtime DOM.
+
+1. Select **Reorder** from the Stage toolbar or command, then press on an eligible existing node.
+   The protected page-root sentinel and locked nodes cannot start a reorder.
+2. Begin dragging only after a 5px mouse threshold or an 8px touch/pen threshold. Pointer capture,
+   suppressed post-drag clicks, and disabled native HTML drag behavior prevent a completed reorder
+   from also becoming a Stage click.
+3. Resolve the pointed projected node through its stable `data-strata-node-id`. The conservative
+   v0.1 placement heuristic is vertical: an eligible Box center is **Inside**; target edges are
+   **Before** or **After**; leaf centers split to Before/After. It is semantic placement feedback,
+   not a promise of Flex/Grid main-axis inference.
+4. Preview a valid Inside target with its parent/container highlight and a valid Before/After target
+   with a sibling insertion line. Invalid, locked, root-sibling, non-Box-parent, self, and
+   descendant destinations remain visibly disabled with a reason. Inside is restricted to Box
+   containers by the same conservative parent policy as insertion and hierarchy reparenting.
+5. On pointer-up, recompute and validate the candidate against the latest Project Model. A valid
+   drop emits exactly one document-scoped `MoveNode` with a post-detach sibling index and
+   `source: "stage"`; a no-op or invalid candidate creates no history entry. The moved node remains
+   selected, and the history envelope restores that selection with the exact inverse on Undo/Redo.
+
+Escape, `pointercancel`, `lostpointercapture`, frame blur, a Stage tool/workspace switch, or a
+runtime-frame reconnect cancel an active reorder and clear its preview without changing the Project Model or history. Touch reorder
+uses `touch-action: none` only while Reorder mode is active. The hierarchy commands remain the
+keyboard-accessible structural alternative while a fully keyboard-navigable Stage drop-target
+picker is deferred.
+
 ## Selection-aware history
 
 Project operations remain independent of editor UI state. The Studio history envelope may also
@@ -172,11 +205,14 @@ Tests cover all five primitive presets, schema parsing, independent object creat
 inside/before/after target resolution, rejection of non-Box parents, opaque ID collision handling,
 exact operation inversion, canonical move indices, legacy-root normalization, deep copy and internal
 reference remapping, delete fallback, Project Store persistence, Stage and hierarchy projection,
-shortcut scoping, and selection-aware Undo/Redo with stable node IDs.
+shortcut scoping, and selection-aware Undo/Redo with stable node IDs. Stage reorder tests cover the
+vertical placement heuristic, same-parent post-detach indices, cross-parent/Box placement,
+protected/locked/descendant/root-sibling rejection, no-op drops, and exact `MoveNode` inversion.
 
 ## Remaining structural work
 
-- Stage drag gestures, insertion-between-siblings, target-parent highlighting, and layout preview;
+- Flex/Grid-axis-aware Stage placement, auto-scroll, drag ghosts, and richer layout preview beyond
+  the current conservative vertical semantic feedback;
 - structured operation/runtime failures in Problems;
 - external-reference diagnostics before subtree delete;
 - DOM ID/IDREF remapping or an explicit block before duplicating imported markup;

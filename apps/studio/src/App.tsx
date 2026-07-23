@@ -41,6 +41,7 @@ import {
   Monitor,
   MoreHorizontal,
   MousePointer2,
+  Move as MoveIcon,
   PanelBottomClose,
   PanelLeftClose,
   PanelRightClose,
@@ -76,6 +77,7 @@ import {
 import { AddElementPanel, type InsertableElementType } from "./add-element-panel";
 import { createElementNode } from "./element-factory";
 import {
+  acceptsInsertedChildren,
   createElementId,
   type InsertionPlacement,
   isPageRoot,
@@ -90,6 +92,13 @@ import {
 } from "./element-structure";
 import { ModelInspector } from "./model-inspector";
 import {
+  planStagePlacement,
+  type StagePlacement,
+  type StagePlacementPlan,
+  type StagePlacementRejectionReason,
+  stagePlacementFromPoint,
+} from "./stage-placement";
+import {
   createStudioProject,
   selectedNode as findSelectedNode,
   INITIAL_SELECTED_NODE_ID,
@@ -97,6 +106,7 @@ import {
 import { type ProjectHistoryContext, useProjectStore } from "./use-project-store";
 
 type WorkspaceMode = "stage" | "blueprint" | "agent";
+type StageTool = "select" | "move" | "pan";
 type ActivityTool = "hierarchy" | "blocks" | "assets" | "search";
 type InspectorTab = "design" | "content" | "interactions" | "bundle";
 type BottomTab = "operations" | "console" | "problems";
@@ -158,6 +168,30 @@ interface HierarchyCommands {
   outdent: () => void;
   duplicate: () => void;
   remove: () => void;
+}
+
+interface StageDropPreview {
+  sourceNodeId: string;
+  targetNodeId: string;
+  placement: StagePlacement;
+  status: StagePlacementPlan["status"];
+  message: string;
+  targetStyle: CSSProperties;
+  parentStyle?: CSSProperties;
+  lineStyle?: CSSProperties;
+  pointerStyle: CSSProperties;
+}
+
+interface StagePointerSession {
+  pointerId: number;
+  sourceNodeId: string;
+  sourceElement: Element;
+  startX: number;
+  startY: number;
+  clientX: number;
+  clientY: number;
+  dragging: boolean;
+  candidate: { targetNodeId: string; placement: StagePlacement } | null;
 }
 
 const DEFAULT_PROPERTIES: ElementProperties = {
@@ -299,6 +333,105 @@ function elementLabel(element: Element | null): string {
   return `${tag}${id}${classes}`;
 }
 
+const stagePlacementReasonLabels: Record<StagePlacementRejectionReason, string> = {
+  "unknown-dragged-node": "the source is no longer available",
+  "unknown-hover-target": "the target is no longer available",
+  "dragged-node-locked": "the source is locked",
+  "page-root-sentinel": "the page root is protected",
+  "target-in-dragged-subtree": "a node cannot move into its own subtree",
+  "root-sibling-placement": "Stage moves cannot create page-level siblings",
+  "parent-not-box": "the destination is not a Box container",
+  "parent-locked": "the destination container is locked",
+  "invalid-tree": "the canonical hierarchy is incomplete",
+};
+
+function stageNodeName(project: StrataProject, nodeId: string): string {
+  const node = project.documents[project.activeDocumentId]?.nodes[nodeId];
+  return node?.editor.name ?? node?.type ?? nodeId;
+}
+
+function stagePointInParent(
+  frame: HTMLIFrameElement,
+  clientX: number,
+  clientY: number,
+): { left: number; top: number } {
+  const bounds = frame.getBoundingClientRect();
+  const scaleX = frame.offsetWidth > 0 ? bounds.width / frame.offsetWidth : 1;
+  const scaleY = frame.offsetHeight > 0 ? bounds.height / frame.offsetHeight : 1;
+  return {
+    left: bounds.left + frame.clientLeft * scaleX + clientX * scaleX + 14,
+    top: bounds.top + frame.clientTop * scaleY + clientY * scaleY + 14,
+  };
+}
+
+function buildStageDropPreview(
+  project: StrataProject,
+  frame: HTMLIFrameElement,
+  runtimeDocument: Document,
+  sourceNodeId: string,
+  target: Element,
+  placement: StagePlacement,
+  clientX: number,
+  clientY: number,
+): StageDropPreview | null {
+  const targetNodeId = target.getAttribute("data-strata-node-id");
+  if (!targetNodeId) return null;
+  const plan = planStagePlacement(project, sourceNodeId, targetNodeId, placement);
+  const targetBounds = getElementBounds(target);
+  const sourceName = stageNodeName(project, sourceNodeId);
+  const targetName = stageNodeName(project, targetNodeId);
+  const relation = placement === "inside" ? "inside" : placement;
+  const message =
+    plan.status === "unavailable"
+      ? `Can't move “${sourceName}” ${relation} “${targetName}”: ${stagePlacementReasonLabels[plan.reason]}.`
+      : plan.status === "no-op"
+        ? `“${sourceName}” is already ${relation} “${targetName}”.`
+        : `Move “${sourceName}” ${relation} “${targetName}”.`;
+
+  let parentStyle: CSSProperties | undefined;
+  if (plan.status === "ready" && plan.command.operation.parentId) {
+    const parentElement = projectionFor(runtimeDocument, plan.command.operation.parentId);
+    if (parentElement && parentElement !== target) {
+      const parentBounds = getElementBounds(parentElement);
+      parentStyle = {
+        display: "block",
+        left: parentBounds.left,
+        top: parentBounds.top,
+        width: parentBounds.width,
+        height: parentBounds.height,
+      };
+    }
+  }
+
+  const lineStyle: CSSProperties | undefined =
+    placement === "inside"
+      ? undefined
+      : {
+          display: "block",
+          left: targetBounds.left,
+          top: (placement === "before" ? targetBounds.top : targetBounds.bottom) - 1,
+          width: targetBounds.width,
+        };
+
+  return {
+    sourceNodeId,
+    targetNodeId,
+    placement,
+    status: plan.status,
+    message,
+    targetStyle: {
+      display: "block",
+      left: targetBounds.left,
+      top: targetBounds.top,
+      width: targetBounds.width,
+      height: targetBounds.height,
+    },
+    ...(parentStyle ? { parentStyle } : {}),
+    ...(lineStyle ? { lineStyle } : {}),
+    pointerStyle: stagePointInParent(frame, clientX, clientY),
+  };
+}
+
 function readElementProperties(element: Element): ElementProperties {
   const view = element.ownerDocument.defaultView;
   const style = view?.getComputedStyle(element);
@@ -339,12 +472,14 @@ function IconButton({
   icon: Icon,
   label,
   active = false,
+  pressed,
   disabled = false,
   onClick,
 }: {
   icon: LucideIcon;
   label: string;
   active?: boolean;
+  pressed?: boolean;
   disabled?: boolean;
   onClick?: () => void;
 }) {
@@ -354,6 +489,7 @@ function IconButton({
       type="button"
       title={label}
       aria-label={label}
+      aria-pressed={pressed}
       disabled={disabled}
       onClick={onClick}
     >
@@ -815,7 +951,12 @@ export function App() {
   const stageRef = useRef<HTMLDivElement>(null);
   const runtimeFrameRef = useRef<HTMLIFrameElement>(null);
   const runtimeCleanupRef = useRef<(() => void) | null>(null);
-  const selectModeRef = useRef(true);
+  const syncOverlayRef = useRef<() => void>(() => undefined);
+  const stageToolRef = useRef<StageTool>("select");
+  const stageDragCancelRef = useRef<() => void>(() => undefined);
+  const stageMoveCommitRef = useRef<
+    (sourceNodeId: string, targetNodeId: string, placement: StagePlacement) => void
+  >(() => undefined);
   const paletteInputRef = useRef<HTMLInputElement>(null);
   const paletteReturnFocusRef = useRef<HTMLElement | null>(null);
   const {
@@ -826,6 +967,7 @@ export function App() {
     canUndo,
     canRedo,
   } = useProjectStore(createStudioProject);
+  const projectRef = useRef(project);
 
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("stage");
   const [activeTool, setActiveTool] = useState<ActivityTool>("hierarchy");
@@ -835,7 +977,11 @@ export function App() {
   const [styleState, setStyleState] = useState<StyleState>("base");
   const [schemaInspector, setSchemaInspector] = useState(true);
   const [zoom, setZoom] = useState(74);
-  const [selectMode, setSelectMode] = useState(true);
+  const [stageTool, setStageTool] = useState<StageTool>("select");
+  const [stageDropPreview, setStageDropPreview] = useState<StageDropPreview | null>(null);
+  const [stageAnnouncement, setStageAnnouncement] = useState(
+    "Select an element on the Stage or choose Reorder elements to move it.",
+  );
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(INITIAL_SELECTED_NODE_ID);
   const [hovered, setHovered] = useState<Element | null>(null);
   const [selected, setSelected] = useState<Element | null>(null);
@@ -885,7 +1031,9 @@ export function App() {
     return path;
   }, [modelNode, project]);
 
-  selectModeRef.current = selectMode;
+  const stageCanHover = stageTool !== "pan";
+  projectRef.current = project;
+  stageToolRef.current = stageTool;
 
   const syncProperties = useCallback((element: Element | null) => {
     if (element) setProperties(readElementProperties(element));
@@ -929,35 +1077,241 @@ export function App() {
 
   const connectRuntimeFrame = useCallback(() => {
     runtimeCleanupRef.current?.();
-    const document = runtimeFrameRef.current?.contentDocument;
-    if (!document) return;
+    runtimeCleanupRef.current = null;
+    setStageDropPreview(null);
+    const frame = runtimeFrameRef.current;
+    const document = frame?.contentDocument;
+    if (!frame || !document) return;
     const root = document.documentElement;
-    root.style.cursor = selectModeRef.current ? "default" : "grab";
+    let session: StagePointerSession | null = null;
+    let suppressClick = false;
+
+    const syncStageCursor = () => {
+      root.style.cursor = stageToolRef.current === "select" ? "default" : "grab";
+      root.style.touchAction = stageToolRef.current === "move" ? "none" : "";
+    };
+    syncStageCursor();
 
     const targetFor = (event: Event): Element | null => {
       const target = event.target as Element | null;
       return target?.closest?.("[data-strata-node-id]") ?? null;
     };
+
+    const targetAtPoint = (
+      clientX: number,
+      clientY: number,
+      fallbackTarget: Element | null,
+    ): Element | null => {
+      const candidates =
+        typeof document.elementsFromPoint === "function"
+          ? document.elementsFromPoint(clientX, clientY)
+          : [];
+      for (const candidate of candidates) {
+        const target = candidate.closest("[data-strata-node-id]");
+        if (target) return target;
+      }
+      return typeof document.elementsFromPoint === "function" ? null : fallbackTarget;
+    };
+
+    const armSyntheticClickSuppression = () => {
+      suppressClick = true;
+      document.defaultView?.setTimeout(() => {
+        suppressClick = false;
+      }, 0);
+    };
+
+    const clearStageDrag = (
+      options: { releaseCapture?: boolean; suppressSyntheticClick?: boolean } = {},
+    ) => {
+      const activeSession = session;
+      session = null;
+      if (options.suppressSyntheticClick && activeSession?.dragging) armSyntheticClickSuppression();
+      if (
+        options.releaseCapture !== false &&
+        activeSession?.sourceElement.hasPointerCapture?.(activeSession.pointerId)
+      )
+        activeSession.sourceElement.releasePointerCapture?.(activeSession.pointerId);
+      setStageDropPreview(null);
+      setHovered(null);
+      syncStageCursor();
+    };
+    stageDragCancelRef.current = () => clearStageDrag({ suppressSyntheticClick: true });
+
+    const updateStageCandidate = (
+      clientX: number,
+      clientY: number,
+      fallbackTarget: Element | null,
+    ) => {
+      if (!session?.dragging) return;
+      session.clientX = clientX;
+      session.clientY = clientY;
+      const target = targetAtPoint(clientX, clientY, fallbackTarget);
+      const targetNodeId = target?.getAttribute("data-strata-node-id");
+      const activeProject = projectRef.current;
+      const targetNode = targetNodeId
+        ? activeProject.documents[activeProject.activeDocumentId]?.nodes[targetNodeId]
+        : undefined;
+      if (!target || !targetNodeId || !targetNode) {
+        session.candidate = null;
+        setStageDropPreview(null);
+        return;
+      }
+
+      const bounds = target.getBoundingClientRect();
+      const placement = stagePlacementFromPoint(
+        acceptsInsertedChildren(targetNode),
+        clientY,
+        bounds,
+      );
+      session.candidate = { targetNodeId, placement };
+      setStageDropPreview(
+        buildStageDropPreview(
+          activeProject,
+          frame,
+          document,
+          session.sourceNodeId,
+          target,
+          placement,
+          clientX,
+          clientY,
+        ),
+      );
+    };
+
+    const onPointerDown = (event: PointerEvent) => {
+      if (
+        stageToolRef.current !== "move" ||
+        event.button !== 0 ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.altKey ||
+        event.shiftKey
+      )
+        return;
+      const sourceElement = targetFor(event);
+      const sourceNodeId = sourceElement?.getAttribute("data-strata-node-id");
+      const activeDocument = projectRef.current.documents[projectRef.current.activeDocumentId];
+      const sourceNode = sourceNodeId ? activeDocument?.nodes[sourceNodeId] : undefined;
+      if (
+        !sourceElement ||
+        !sourceNodeId ||
+        !activeDocument ||
+        !sourceNode ||
+        sourceNode.editor.locked ||
+        isPageRoot(activeDocument, sourceNodeId)
+      )
+        return;
+
+      event.preventDefault();
+      captureElement(sourceElement, { quiet: true });
+      session = {
+        pointerId: event.pointerId,
+        sourceNodeId,
+        sourceElement,
+        startX: event.clientX,
+        startY: event.clientY,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        dragging: false,
+        candidate: null,
+      };
+      sourceElement.setPointerCapture?.(event.pointerId);
+    };
+
     const onPointerMove = (event: PointerEvent) => {
-      if (!selectModeRef.current) return;
+      if (session?.pointerId === event.pointerId) {
+        const threshold = event.pointerType === "touch" || event.pointerType === "pen" ? 8 : 5;
+        const distance = Math.hypot(event.clientX - session.startX, event.clientY - session.startY);
+        if (!session.dragging && distance < threshold) return;
+        session.dragging = true;
+        event.preventDefault();
+        root.style.cursor = "grabbing";
+        setHovered(null);
+        updateStageCandidate(event.clientX, event.clientY, targetFor(event));
+        return;
+      }
+      if (stageToolRef.current === "pan") return;
       setHovered(targetFor(event));
     };
-    const onPointerLeave = () => setHovered(null);
+
+    const finishPointer = (event: PointerEvent, commit: boolean) => {
+      if (!session || session.pointerId !== event.pointerId) return;
+      const finished = session;
+      if (finished.dragging) event.preventDefault();
+      clearStageDrag({ suppressSyntheticClick: finished.dragging });
+      if (commit && finished.dragging && finished.candidate)
+        stageMoveCommitRef.current(
+          finished.sourceNodeId,
+          finished.candidate.targetNodeId,
+          finished.candidate.placement,
+        );
+    };
+
+    const onPointerUp = (event: PointerEvent) => finishPointer(event, true);
+    const onPointerCancel = (event: PointerEvent) => finishPointer(event, false);
+    const onLostPointerCapture = (event: PointerEvent) => {
+      if (!session || session.pointerId !== event.pointerId) return;
+      clearStageDrag({ releaseCapture: false, suppressSyntheticClick: true });
+      setStageAnnouncement("Stage reorder cancelled because pointer capture was lost.");
+    };
+    const onPointerLeave = () => {
+      if (!session) setHovered(null);
+    };
     const onClick = (event: MouseEvent) => {
       event.preventDefault();
-      if (!selectModeRef.current) return;
+      if (suppressClick) {
+        event.stopPropagation();
+        return;
+      }
+      if (stageToolRef.current === "pan") return;
       const target = targetFor(event);
       if (!target) return;
       event.stopPropagation();
       captureElement(target);
     };
+    const onDragStart = (event: DragEvent) => {
+      if (stageToolRef.current === "move") event.preventDefault();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || !session) return;
+      event.preventDefault();
+      clearStageDrag({ suppressSyntheticClick: true });
+      setStageTool("select");
+      setStageAnnouncement("Stage reorder cancelled.");
+    };
+    const onBlur = () => clearStageDrag({ suppressSyntheticClick: true });
+    const onRuntimeGeometryChange = () => {
+      syncOverlayRef.current();
+      if (session?.dragging) updateStageCandidate(session.clientX, session.clientY, null);
+    };
+
+    document.addEventListener("pointerdown", onPointerDown, true);
     document.addEventListener("pointermove", onPointerMove);
+    document.addEventListener("pointerup", onPointerUp);
+    document.addEventListener("pointercancel", onPointerCancel);
+    document.addEventListener("lostpointercapture", onLostPointerCapture, true);
     document.addEventListener("pointerleave", onPointerLeave);
+    document.addEventListener("scroll", onRuntimeGeometryChange, true);
     document.addEventListener("click", onClick, true);
+    document.addEventListener("dragstart", onDragStart, true);
+    document.addEventListener("keydown", onKeyDown, true);
+    document.defaultView?.addEventListener("blur", onBlur);
+    document.defaultView?.addEventListener("resize", onRuntimeGeometryChange);
     runtimeCleanupRef.current = () => {
+      clearStageDrag({ suppressSyntheticClick: true });
+      stageDragCancelRef.current = () => undefined;
+      document.removeEventListener("pointerdown", onPointerDown, true);
       document.removeEventListener("pointermove", onPointerMove);
+      document.removeEventListener("pointerup", onPointerUp);
+      document.removeEventListener("pointercancel", onPointerCancel);
+      document.removeEventListener("lostpointercapture", onLostPointerCapture, true);
       document.removeEventListener("pointerleave", onPointerLeave);
+      document.removeEventListener("scroll", onRuntimeGeometryChange, true);
       document.removeEventListener("click", onClick, true);
+      document.removeEventListener("dragstart", onDragStart, true);
+      document.removeEventListener("keydown", onKeyDown, true);
+      document.defaultView?.removeEventListener("blur", onBlur);
+      document.defaultView?.removeEventListener("resize", onRuntimeGeometryChange);
     };
 
     const current = projectionFor(document, selectedNodeId);
@@ -968,11 +1322,25 @@ export function App() {
 
   useEffect(() => {
     const root = runtimeFrameRef.current?.contentDocument?.documentElement;
-    if (root) root.style.cursor = selectMode ? "default" : "grab";
-  }, [selectMode]);
+    stageDragCancelRef.current();
+    if (root) {
+      root.style.cursor = stageTool === "select" ? "default" : "grab";
+      root.style.touchAction = stageTool === "move" ? "none" : "";
+    }
+  }, [stageTool]);
+
+  useEffect(() => {
+    if (workspaceMode === "stage") return;
+    stageDragCancelRef.current();
+    runtimeCleanupRef.current?.();
+    runtimeCleanupRef.current = null;
+    setStageTool("select");
+    setHovered(null);
+    setStageDropPreview(null);
+  }, [workspaceMode]);
 
   const syncOverlay = useCallback(() => {
-    const target = selectMode && hovered ? hovered : selected;
+    const target = stageCanHover && hovered ? hovered : selected;
     if (!target?.isConnected || workspaceMode !== "stage") {
       setOverlayStyle({ display: "none" });
       return;
@@ -987,7 +1355,8 @@ export function App() {
       "--overlay-revision": revision,
       "--overlay-viewport": viewportSignature,
     } as CSSProperties);
-  }, [hovered, revision, selectMode, selected, viewportSignature, workspaceMode]);
+  }, [hovered, revision, selected, stageCanHover, viewportSignature, workspaceMode]);
+  syncOverlayRef.current = syncOverlay;
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(syncOverlay);
@@ -1028,6 +1397,49 @@ export function App() {
     },
     [addOperation, applyOperations],
   );
+
+  const commitStagePlacement = useCallback(
+    (sourceNodeId: string, targetNodeId: string, placement: StagePlacement) => {
+      const activeProject = projectRef.current;
+      const sourceName = stageNodeName(activeProject, sourceNodeId);
+      const targetName = stageNodeName(activeProject, targetNodeId);
+      const plan = planStagePlacement(activeProject, sourceNodeId, targetNodeId, placement);
+      if (plan.status === "unavailable") {
+        const message = `Stage move blocked: ${stagePlacementReasonLabels[plan.reason]}.`;
+        setError(message);
+        setStageAnnouncement(message);
+        addOperation("Stage move blocked", message, "system");
+        return;
+      }
+      if (plan.status === "no-op") {
+        setStageAnnouncement(`“${sourceName}” is already in that placement.`);
+        return;
+      }
+
+      try {
+        applyModelOperations([plan.command.operation], `Stage move · ${sourceName}`, {
+          history: {
+            selectionBefore: sourceNodeId,
+            selectionAfter: plan.command.selectionNodeId,
+          },
+        });
+        setSelectedNodeId(plan.command.selectionNodeId);
+        setSelected(null);
+        setHovered(null);
+        setError(null);
+        setStageAnnouncement(
+          `Moved “${sourceName}” ${placement} “${targetName}”. Undo with Control or Command Z.`,
+        );
+      } catch (caught) {
+        const message = caught instanceof Error ? caught.message : "The Stage move could not apply";
+        setError(message);
+        setStageAnnouncement(message);
+        addOperation("Stage move failed", message, "system");
+      }
+    },
+    [addOperation, applyModelOperations],
+  );
+  stageMoveCommitRef.current = commitStagePlacement;
 
   const insertElement = useCallback(
     (type: InsertableElementType, placement: InsertionPlacement) => {
@@ -1378,8 +1790,24 @@ export function App() {
         !isEditing &&
         !event.isComposing
       ) {
-        setSelectMode((value) => !value);
+        setStageTool((value) => (value === "select" ? "pan" : "select"));
+      } else if (
+        event.key.toLowerCase() === "m" &&
+        !modifier &&
+        !event.altKey &&
+        !isEditing &&
+        !event.isComposing
+      ) {
+        setStageTool("move");
+        setStageAnnouncement(
+          `Reorder “${modelNode?.editor.name ?? modelNode?.type ?? "selection"}”: drag it to a highlighted placement.`,
+        );
       } else if (event.key === "Escape") {
+        stageDragCancelRef.current();
+        if (stageTool === "move") {
+          setStageTool("select");
+          setStageAnnouncement("Stage reorder cancelled.");
+        }
         if (paletteOpen) closeCommandPalette();
         else setAddElementOpen(false);
         setHovered(null);
@@ -1396,6 +1824,8 @@ export function App() {
     openCommandPalette,
     paletteOpen,
     redo,
+    modelNode,
+    stageTool,
     structureCapabilities,
     undo,
   ]);
@@ -1426,8 +1856,8 @@ export function App() {
   };
 
   const previewDocument = useMemo(() => (bundle ? buildPreviewDocument(bundle) : ""), [bundle]);
-  const overlayTarget = selectMode && hovered ? hovered : selected;
-  const overlayIsHover = Boolean(selectMode && hovered && hovered !== selected);
+  const overlayTarget = stageCanHover && hovered ? hovered : selected;
+  const overlayIsHover = Boolean(stageCanHover && hovered && hovered !== selected);
 
   const downloadBundle = () => {
     if (!bundle) return;
@@ -1495,7 +1925,16 @@ export function App() {
       label: "Toggle element selector",
       hint: "P",
       icon: MousePointer2,
-      action: () => setSelectMode((value) => !value),
+      action: () => setStageTool((value) => (value === "select" ? "pan" : "select")),
+    },
+    {
+      label: "Reorder elements on Stage",
+      hint: "M",
+      icon: MoveIcon,
+      action: () => {
+        setStageTool("move");
+        setStageAnnouncement("Reorder mode: drag an element to a highlighted placement.");
+      },
     },
     {
       label: "Open Stage workspace",
@@ -1755,14 +2194,28 @@ export function App() {
                     <IconButton
                       icon={MousePointer2}
                       label="Select (P)"
-                      active={selectMode}
-                      onClick={() => setSelectMode(true)}
+                      active={stageTool === "select"}
+                      pressed={stageTool === "select"}
+                      onClick={() => setStageTool("select")}
+                    />
+                    <IconButton
+                      icon={MoveIcon}
+                      label="Reorder elements (M)"
+                      active={stageTool === "move"}
+                      pressed={stageTool === "move"}
+                      onClick={() => {
+                        setStageTool("move");
+                        setStageAnnouncement(
+                          `Reorder “${modelNode?.editor.name ?? modelNode?.type ?? "selection"}”: drag it to a highlighted placement.`,
+                        );
+                      }}
                     />
                     <IconButton
                       icon={Hand}
                       label="Pan"
-                      active={!selectMode}
-                      onClick={() => setSelectMode(false)}
+                      active={stageTool === "pan"}
+                      pressed={stageTool === "pan"}
+                      onClick={() => setStageTool("pan")}
                     />
                     <span className="toolbar-divider" />
                     <IconButton icon={Undo2} label="Undo" disabled={!canUndo} onClick={undo} />
@@ -1827,7 +2280,7 @@ export function App() {
                 </div>
                 <div
                   ref={stageRef}
-                  className={`strata-stage ${selectMode ? "is-selecting" : "is-panning"}`}
+                  className={`strata-stage is-${stageTool}${stageDropPreview ? " has-drop-preview" : ""}`}
                   style={stageStyle}
                   onPointerLeave={() => setHovered(null)}
                 >
@@ -2502,13 +2955,14 @@ export function App() {
           </span>
         </div>
         <div>
-          <span>Stage: Project Model</span>
+          <span>Stage: {stageTool === "move" ? "Reorder mode" : "Project Model"}</span>
           <span>{modelNode?.editor.name ?? "No selection"}</span>
           <span>
             <Activity size={11} /> 60 FPS
           </span>
           <span className="status-ready">
-            <i /> Canonical operations ready
+            <i />{" "}
+            {stageTool === "move" ? "Drag to move · Esc cancels" : "Canonical operations ready"}
           </span>
         </div>
       </footer>
@@ -2523,6 +2977,34 @@ export function App() {
         <i className="handle ne" />
         <i className="handle sw" />
         <i className="handle se" />
+      </div>
+
+      {stageDropPreview && (
+        <div className="stage-drop-preview" aria-hidden="true">
+          {stageDropPreview.parentStyle && (
+            <div className="stage-drop-parent" style={stageDropPreview.parentStyle} />
+          )}
+          <div
+            className={`stage-drop-target is-${stageDropPreview.placement} is-${stageDropPreview.status}`}
+            style={stageDropPreview.targetStyle}
+          />
+          {stageDropPreview.lineStyle && (
+            <div
+              className={`stage-drop-line is-${stageDropPreview.status}`}
+              style={stageDropPreview.lineStyle}
+            />
+          )}
+          <div
+            className={`stage-drop-message is-${stageDropPreview.status}`}
+            style={stageDropPreview.pointerStyle}
+          >
+            <MoveIcon size={12} />
+            <span>{stageDropPreview.message}</span>
+          </div>
+        </div>
+      )}
+      <div className="sr-only" aria-live="polite" aria-atomic="true">
+        {stageDropPreview?.message ?? stageAnnouncement}
       </div>
 
       {paletteOpen && (

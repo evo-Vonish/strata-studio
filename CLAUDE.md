@@ -1,6 +1,6 @@
 # Strata Studio project memory
 
-Last updated: 2026-07-22
+Last updated: 2026-07-23
 
 This file is the durable, repository-scoped context for Claude Code, Codex, and other coding agents.
 Read it before making architectural changes. Keep it concise, factual, and current. Never store API
@@ -65,6 +65,13 @@ sources of truth.
 - **M1.2 structural commands:** a protected Box page-root sentinel, canonical sibling move up/down,
   indent into the previous Box, outdent after the current parent, deep subtree duplicate, subtree
   delete, hierarchy-scoped keyboard commands, and selection-aware Undo/Redo.
+- **M1.2 Stage reorder:** an explicit Reorder mode routes iframe Pointer Events through a
+  conservative vertical Before/Inside/After placement planner. It starts after a 5px mouse or 8px
+  touch/pen threshold, previews parent/container highlights, sibling insertion lines, or disabled
+  targets, and commits one latest-model-validated `MoveNode` on pointer-up. Inside remains
+  Box-only; selection stays on the moved node and exact Undo/Redo uses the same history envelope.
+  Escape, pointer cancellation/capture loss, frame blur, a tool switch, and leaving Stage cancel
+  without creating history.
 
 The active editor data path is:
 
@@ -79,13 +86,15 @@ Inspector / Stage / Agent intent
 
 ### Active next slice
 
-Finish the Stage gesture and diagnostic parts of structural authoring before Blueprint execution:
+With conservative Stage reorder complete, finish diagnostics and integrity work before Blueprint
+execution:
 
-1. add Stage placement previews, parent highlighting, and between-sibling drop targets;
-2. route reducer/runtime failures into Problems;
-3. guard deletion against external node references and handle authored DOM IDs during duplicate;
-4. define an explicit migration/diagnostic path for imported documents without a valid Box page
+1. route reducer/runtime failures into Problems without corrupting history;
+2. guard deletion against external node references and handle authored DOM IDs during duplicate;
+3. define an explicit migration/diagnostic path for imported documents without a valid Box page
    root;
+4. extend Stage placement from its current vertical semantic baseline to Flex/Grid axis-aware
+   feedback only after those invariants are covered;
 5. then begin `Button Click -> Set Text` in the minimal Blueprint workspace.
 
 ## Important implementation boundaries
@@ -106,8 +115,10 @@ Finish the Stage gesture and diagnostic parts of structural authoring before Blu
   This is an editor policy layered above the generic Project Model root array.
 - Hierarchy structure shortcuts run only while the hierarchy/tree toolbar owns focus; Inspector and
   search inputs retain native editing behavior.
-- Problems/diagnostics, Stage drag placement, external-reference repair, imported-root migration,
-  and runtime Blueprint execution are not complete yet.
+- Stage reorder currently uses explicit mode and conservative vertical semantics; Flex/Grid
+  axis-aware placement, auto-scroll, and drag ghosts are not complete yet. Problems/diagnostics,
+  external-reference repair, imported-root migration, and runtime Blueprint execution are also not
+  complete yet.
 
 ## Repository map
 
