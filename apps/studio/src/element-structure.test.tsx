@@ -6,6 +6,7 @@ import {
   createDuplicateElementCommand,
   createMoveElementCommand,
   getElementStructureCapabilities,
+  isElementStructureIntegrityError,
 } from "./element-structure";
 
 function createStructureProject(): StrataProject {
@@ -27,6 +28,8 @@ function createStructureProject(): StrataProject {
   alpha.attributes = {
     internalTarget: { kind: "reference", nodeId: "alpha-text" },
     externalTarget: { kind: "reference", nodeId: "gamma" },
+    id: { kind: "literal", value: "alpha-dom" },
+    "aria-labelledby": { kind: "literal", value: "alpha-text-dom gamma-dom" },
   };
   const alphaRule = alpha.styleRules[0];
   if (!alphaRule) throw new Error("The Alpha fixture is missing its default style rule");
@@ -39,6 +42,7 @@ function createStructureProject(): StrataProject {
     parentId: "alpha",
   });
   alphaText.editor.name = "Alpha text";
+  alphaText.attributes.id = { kind: "literal", value: "alpha-text-dom" };
   alphaText.content = { kind: "reference", nodeId: "alpha" };
 
   const beta = createElementNode({ type: "Box", nodeId: "beta", parentId: "page" });
@@ -263,6 +267,67 @@ describe("element structure commands", () => {
     expect(applyTransaction(deleted.project, deleted.inverse).project).toEqual(project);
   });
 
+  it("blocks delete with all surviving typed and DOM references without changing the project", () => {
+    const draft = createStructureProject();
+    const gamma = draft.documents.document?.nodes.gamma;
+    if (!gamma) throw new Error("The structure fixture gamma is missing");
+    gamma.attributes.href = { kind: "literal", value: "#alpha-text-dom" };
+    gamma.styleRules = [
+      {
+        scope: { breakpoint: "mobile", state: "hover" },
+        properties: { "--removed-target": { kind: "reference", nodeId: "alpha-text" } },
+      },
+    ];
+    const project = parseProject(draft);
+    const before = structuredClone(project);
+
+    try {
+      createDeleteElementCommand(project, "alpha");
+      throw new Error("Expected delete integrity preflight to fail");
+    } catch (error) {
+      expect(isElementStructureIntegrityError(error)).toBe(true);
+      if (!isElementStructureIntegrityError(error)) throw error;
+      expect(error.issues).toEqual([
+        expect.objectContaining({
+          code: "EXTERNAL_DOM_ID_REFERENCE",
+          nodeId: "gamma",
+          property: "href",
+          relatedNodeId: "alpha-text",
+        }),
+        expect.objectContaining({
+          code: "EXTERNAL_NODE_REFERENCE",
+          nodeId: "gamma",
+          property: "styleRules.properties.--removed-target [breakpoint=mobile, state=hover]",
+          relatedNodeId: "alpha-text",
+        }),
+      ]);
+    }
+    expect(project).toEqual(before);
+  });
+
+  it("wraps invalid DOM-id duplicate failures in the structure integrity error", () => {
+    const draft = createStructureProject();
+    const alpha = draft.documents.document?.nodes.alpha;
+    if (!alpha) throw new Error("The structure fixture alpha is missing");
+    alpha.attributes.id = { kind: "literal", value: "invalid id" };
+    const project = parseProject(draft);
+    const before = structuredClone(project);
+
+    expect(() => createDuplicateElementCommand(project, "alpha")).toThrowError(
+      expect.objectContaining({ name: "ElementStructureIntegrityError" }),
+    );
+    try {
+      createDuplicateElementCommand(project, "alpha");
+    } catch (error) {
+      expect(isElementStructureIntegrityError(error)).toBe(true);
+      if (!isElementStructureIntegrityError(error)) throw error;
+      expect(error.issues).toEqual([
+        expect.objectContaining({ code: "INVALID_AUTHORED_DOM_ID", nodeId: "alpha" }),
+      ]);
+    }
+    expect(project).toEqual(before);
+  });
+
   it("duplicates a deep subtree with unique typed IDs and remapped internal references", () => {
     const draft = createStructureProject();
     const document = draft.documents.document;
@@ -317,7 +382,13 @@ describe("element structure commands", () => {
     expect(operation.node.attributes).toEqual({
       internalTarget: { kind: "reference", nodeId: copiedTextId },
       externalTarget: { kind: "reference", nodeId: "gamma" },
+      id: { kind: "literal", value: "alpha-dom--copy" },
+      "aria-labelledby": {
+        kind: "literal",
+        value: "alpha-text-dom--copy gamma-dom",
+      },
     });
+    expect(copiedText.attributes.id).toEqual({ kind: "literal", value: "alpha-text-dom--copy" });
     expect(operation.node.styleRules[0]?.properties["--internal-target"]).toEqual({
       kind: "reference",
       nodeId: copiedTextId,
@@ -338,5 +409,6 @@ describe("element structure commands", () => {
     expect(duplicated.project.documents.document?.nodes[copiedTextId]?.parentId).toBe(copiedRootId);
     expect(project.documents.document?.nodes.alpha?.children).toEqual(["alpha-text"]);
     expect(applyTransaction(duplicated.project, duplicated.inverse).project).toEqual(project);
+    expect(applyTransaction(project, command.operations).project).toEqual(duplicated.project);
   });
 });

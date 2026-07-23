@@ -107,6 +107,58 @@ describe("project model", () => {
     expect(removed.project.documents.d?.nodes.a1).toBeUndefined();
     expect(applyOperation(removed.project, removed.inverse).project).toEqual(project);
   });
+  it("blocks removal when surviving nodes hold typed references into the subtree", () => {
+    const referenced = structuredClone(project);
+    const root = fixtureNode(referenced, "d", "root");
+    root.content = { kind: "reference", nodeId: "a1" };
+    root.attributes.target = { kind: "reference", nodeId: "a" };
+    root.styleRules = [
+      {
+        scope: { breakpoint: "mobile", state: "hover" },
+        properties: { "--target": { kind: "reference", nodeId: "a1" } },
+      },
+    ];
+    root.accessibility.aria.controls = { kind: "reference", nodeId: "a" };
+    const before = structuredClone(referenced);
+
+    const error = operationErrorOf(() =>
+      applyOperation(referenced, { type: "RemoveNode", nodeId: "a" }),
+    );
+    expect(error).toMatchObject({
+      code: "EXTERNAL_NODE_REFERENCE",
+      operationType: "RemoveNode",
+      documentId: "d",
+      nodeId: "a",
+    });
+    expect(error.externalNodeReferences).toEqual([
+      {
+        sourceNodeId: "root",
+        targetNodeId: "a",
+        field: "accessibility",
+        path: ["accessibility", "aria", "controls"],
+      },
+      {
+        sourceNodeId: "root",
+        targetNodeId: "a",
+        field: "attributes",
+        path: ["attributes", "target"],
+      },
+      {
+        sourceNodeId: "root",
+        targetNodeId: "a1",
+        field: "content",
+        path: ["content"],
+      },
+      {
+        sourceNodeId: "root",
+        targetNodeId: "a1",
+        field: "style",
+        path: ["styleRules", "properties", "--target"],
+        scope: { breakpoint: "mobile", state: "hover" },
+      },
+    ]);
+    expect(referenced).toEqual(before);
+  });
   it("supports root insert, move and removal while preserving at least one root", () => {
     const extra = node("extra", null);
     const inserted = applyOperation(project, {
@@ -284,6 +336,47 @@ describe("project model", () => {
     });
     expect(project).toEqual(before);
     expect(project.documents.d?.nodes.a?.content).toBeUndefined();
+  });
+  it("allows reference cleanup before removal but rejects the reverse transaction atomically", () => {
+    const referenced = structuredClone(project);
+    fixtureNode(referenced, "d", "root").attributes.target = {
+      kind: "reference",
+      nodeId: "a",
+    };
+
+    const cleaned = applyTransaction(referenced, [
+      { type: "RemoveAttribute", nodeId: "root", name: "target" },
+      { type: "RemoveNode", nodeId: "a" },
+    ]);
+    expect(cleaned.project.documents.d?.nodes.a).toBeUndefined();
+    expect(applyTransaction(cleaned.project, cleaned.inverse).project).toEqual(referenced);
+
+    const error = operationErrorOf(() =>
+      applyTransaction(referenced, [
+        { type: "RemoveNode", nodeId: "a" },
+        { type: "RemoveAttribute", nodeId: "root", name: "target" },
+      ]),
+    );
+    expect(error).toMatchObject({
+      code: "EXTERNAL_NODE_REFERENCE",
+      operationType: "RemoveNode",
+      documentId: "d",
+      nodeId: "a",
+      operationIndex: 0,
+    });
+    expect(error.externalNodeReferences).toEqual([
+      {
+        sourceNodeId: "root",
+        targetNodeId: "a",
+        field: "attributes",
+        path: ["attributes", "target"],
+      },
+    ]);
+    expect(referenced.documents.d?.nodes.a).toBeDefined();
+    expect(referenced.documents.d?.nodes.root?.attributes.target).toEqual({
+      kind: "reference",
+      nodeId: "a",
+    });
   });
   it("changes semantic tags through a reversible operation", () => {
     const changed = applyOperation(project, { type: "SetTag", nodeId: "a", tag: "section" });

@@ -1,4 +1,5 @@
 import type {
+  ExternalNodeReference,
   InsertNode,
   MoveNode,
   PropertyMap,
@@ -7,10 +8,48 @@ import type {
   StrataNode,
   StrataProject,
   StrataValue,
+  StyleScope,
 } from "@strata/project-model";
+import { findExternalNodeReferences } from "@strata/project-model";
+import {
+  DomReferenceIntegrityError,
+  findExternalDomReferences,
+  rewriteDuplicatedDomReferences,
+} from "./dom-reference-integrity";
 import { assertCanContainElement, isPageRoot, pageRootNode } from "./element-insertion";
 
 export type StructureMoveDirection = "up" | "down" | "indent" | "outdent";
+
+export type ElementStructureIntegrityCode =
+  | "EXTERNAL_NODE_REFERENCE"
+  | "EXTERNAL_DOM_ID_REFERENCE"
+  | "DUPLICATE_AUTHORED_DOM_ID"
+  | "INVALID_AUTHORED_DOM_ID";
+
+export interface ElementStructureIntegrityIssue {
+  code: ElementStructureIntegrityCode;
+  message: string;
+  nodeId: string;
+  property?: string;
+  relatedNodeId?: string;
+}
+
+/** A deterministic structure-command preflight failure that is safe to show in Problems. */
+export class ElementStructureIntegrityError extends Error {
+  readonly issues: readonly ElementStructureIntegrityIssue[];
+
+  constructor(issues: readonly ElementStructureIntegrityIssue[]) {
+    super(issues[0]?.message ?? "Element structure integrity check failed");
+    this.name = "ElementStructureIntegrityError";
+    this.issues = issues;
+  }
+}
+
+export function isElementStructureIntegrityError(
+  error: unknown,
+): error is ElementStructureIntegrityError {
+  return error instanceof ElementStructureIntegrityError;
+}
 
 export interface ElementStructureCapabilities {
   canMoveUp: boolean;
@@ -145,6 +184,68 @@ function unavailableMove(direction: StructureMoveDirection): Error {
   return new Error(`The selected node cannot ${labels[direction]}`);
 }
 
+function compareText(a: string, b: string): number {
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
+
+function scopeDescription(scope: Readonly<StyleScope> | undefined): string {
+  if (!scope) return "";
+  const entries: Array<[string, string]> = [];
+  if (scope.breakpoint !== undefined) entries.push(["breakpoint", scope.breakpoint]);
+  if (scope.state !== undefined) entries.push(["state", scope.state]);
+  if (scope.colorMode !== undefined) entries.push(["colorMode", scope.colorMode]);
+  if (scope.variant !== undefined) entries.push(["variant", scope.variant]);
+  return entries.length === 0
+    ? ""
+    : ` [${entries.map(([name, value]) => `${name}=${value}`).join(", ")}]`;
+}
+
+function typedReferenceProperty(reference: ExternalNodeReference): string {
+  const path = reference.path.join(".");
+  return `${path}${scopeDescription(reference.scope)}`;
+}
+
+function integrityIssueOrder(
+  a: ElementStructureIntegrityIssue,
+  b: ElementStructureIntegrityIssue,
+): number {
+  return (
+    compareText(a.nodeId, b.nodeId) ||
+    compareText(a.code, b.code) ||
+    compareText(a.property ?? "", b.property ?? "") ||
+    compareText(a.relatedNodeId ?? "", b.relatedNodeId ?? "")
+  );
+}
+
+function deleteIntegrityIssues(
+  document: StrataDocument,
+  nodeId: string,
+): ElementStructureIntegrityIssue[] {
+  const typed = findExternalNodeReferences(document, nodeId).map(
+    (reference): ElementStructureIntegrityIssue => {
+      const property = typedReferenceProperty(reference);
+      return {
+        code: "EXTERNAL_NODE_REFERENCE",
+        message: `Node '${reference.sourceNodeId}' references removed node '${reference.targetNodeId}' at ${property}`,
+        nodeId: reference.sourceNodeId,
+        property,
+        relatedNodeId: reference.targetNodeId,
+      };
+    },
+  );
+  const dom = findExternalDomReferences(document, nodeId).map(
+    (reference): ElementStructureIntegrityIssue => ({
+      code: "EXTERNAL_DOM_ID_REFERENCE",
+      message: `Node '${reference.nodeId}' references removed DOM id '${reference.targetId}' through ${reference.property}`,
+      nodeId: reference.nodeId,
+      property: reference.property,
+      ...(reference.targetNodeId ? { relatedNodeId: reference.targetNodeId } : {}),
+    }),
+  );
+  return [...typed, ...dom].sort(integrityIssueOrder);
+}
+
 /** Creates one explicitly document-scoped MoveNode operation. */
 export function createMoveElementCommand(
   project: StrataProject,
@@ -214,6 +315,8 @@ export function createDeleteElementCommand(
   const context = nodeContext(project, nodeId);
   if (!getElementStructureCapabilities(project, nodeId).canDelete)
     throw new Error("The selected node cannot be deleted");
+  const integrityIssues = deleteIntegrityIssues(context.document, nodeId);
+  if (integrityIssues.length > 0) throw new ElementStructureIntegrityError(integrityIssues);
   const selectionFallbackId =
     context.siblings[context.index + 1] ??
     context.siblings[context.index - 1] ??
@@ -346,6 +449,21 @@ export function createDuplicateElementCommand(
   const idMap = new Map<string, string>();
   for (const node of originalNodes) idMap.set(node.id, allocateNodeId(node, occupied, idSource));
   const copiedNodes = originalNodes.map((node) => cloneSubtreeNode(node, nodeId, idMap));
+  try {
+    rewriteDuplicatedDomReferences(context.document, originalNodes, copiedNodes);
+  } catch (error) {
+    if (error instanceof DomReferenceIntegrityError)
+      throw new ElementStructureIntegrityError(
+        error.issues.map((issue) => ({
+          code: issue.code,
+          message: issue.message,
+          nodeId: issue.nodeId,
+          property: issue.property,
+          ...(issue.relatedNodeId === undefined ? {} : { relatedNodeId: issue.relatedNodeId }),
+        })),
+      );
+    throw error;
+  }
   const root = copiedNodes[0];
   if (!root) throw new Error("The selected subtree is empty");
 

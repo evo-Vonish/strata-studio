@@ -2,7 +2,8 @@
 
 Last updated: 2026-07-23
 
-Status: insertion, hierarchy-command, and explicit Stage reorder slices implemented
+Status: insertion, hierarchy-command, explicit Stage reorder, and Reference Integrity v0.1
+implemented
 
 This specification defines how the Studio creates, places, reorders, reparents, duplicates, and
 deletes the five initial primitive elements without making the rendered DOM authoritative.
@@ -119,10 +120,14 @@ rewrites node identity, parent links, child links, and internal `StrataValue.ref
 References outside the copied subtree remain external. The operation snapshot and IDs are created
 once, so Redo restores the same copied subtree rather than allocating a different identity.
 
-Authored DOM `id` values and raw IDREF strings are not yet remapped. Duplicate is therefore proven
-for Studio primitives and typed Strata node references, not arbitrary imported markup with `id`,
-`for`, `href="#…"`, or opaque passthrough references. That case requires a diagnostic or a DOM-ID
-mapping pass before the command becomes a general importer guarantee.
+The frozen authored DOM identity contract is in
+[Reference Integrity v0.1](reference-integrity-v0.1.md). Before a duplicate becomes its one
+`InsertNode` history snapshot, valid authored DOM IDs receive document-unique `--copy` values and
+supported internal HTML/ARIA IDREFs and exact local `#fragment` links are rewritten. Invalid or
+ambiguous authored IDs block the command atomically. Raw, binding, CSS, `usemap`, and other opaque
+reference forms remain outside this guarantee. Runtime rendering and this rewrite share the same
+case-insensitive effective-attribute resolver, so a shadowed passthrough value cannot override or
+redirect the copied Stage result.
 
 ### Delete and surviving references
 
@@ -130,10 +135,13 @@ Delete removes the selected node and every descendant. Its fallback selection is
 application as next sibling, previous sibling, parent, then page root. The Project Model inverse
 captures the entire subtree and exact index.
 
-The reducer deliberately does not rewrite references in surviving nodes. A future Problems-backed
-reference scan must block or warn when an outside node points into the deleted subtree. Until then,
-delete is structurally reversible but does not claim automatic repair of arbitrary imported
-cross-subtree references.
+The Project Model reducer is the final typed-reference boundary: a surviving
+`StrataValue.reference` into the selected subtree produces `EXTERNAL_NODE_REFERENCE` and the whole
+transaction fails atomically. Studio preflight reports every typed blocker and every supported
+authored DOM IDREF blocker at its source node/property in Problems; it does not offer force-delete
+or silently repair the reference. Opaque and DOM-string reference coverage is defined, and
+deliberately limited, by
+[Reference Integrity v0.1](reference-integrity-v0.1.md).
 
 ## Explicit Stage reorder
 
@@ -213,9 +221,6 @@ protected/locked/descendant/root-sibling rejection, no-op drops, and exact `Move
 
 - Flex/Grid-axis-aware Stage placement, auto-scroll, drag ghosts, and richer layout preview beyond
   the current conservative vertical semantic feedback;
-- structured operation/runtime failures in Problems;
-- external-reference diagnostics before subtree delete;
-- DOM ID/IDREF remapping or an explicit block before duplicating imported markup;
 - imported-document migration when the first root is not a compatible Box sentinel;
 - richer tag-aware parent/child validation beyond the conservative Box-only policy;
 - replace the starter Image placeholder through the asset workflow.

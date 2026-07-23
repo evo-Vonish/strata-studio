@@ -90,7 +90,9 @@ import {
   createDeleteElementCommand,
   createDuplicateElementCommand,
   createMoveElementCommand,
+  type ElementStructureIntegrityError,
   getElementStructureCapabilities,
+  isElementStructureIntegrityError,
   type StructureMoveDirection,
 } from "./element-structure";
 import { ModelInspector } from "./model-inspector";
@@ -107,6 +109,7 @@ import {
   createStudioDiagnostic,
   mergeDiagnostics,
   operationErrorToDiagnostic,
+  operationErrorToDiagnostics,
   type StudioDiagnostic,
 } from "./studio-diagnostics";
 import {
@@ -124,6 +127,26 @@ type BottomTab = "operations" | "console" | "problems";
 type DeviceMode = "desktop" | "tablet" | "mobile";
 type StyleState = "base" | "hover" | "focus" | "focus-visible" | "active" | "disabled";
 type ResizeTarget = "left" | "right" | "bottom";
+
+function structureIntegrityDiagnostics(
+  error: ElementStructureIntegrityError,
+  documentId: string,
+  operationType: "InsertNode" | "RemoveNode",
+): StudioDiagnostic[] {
+  return error.issues.map((issue) =>
+    createStudioDiagnostic({
+      severity: "error",
+      source: "structure",
+      code: issue.code,
+      message: issue.message,
+      documentId,
+      nodeId: issue.nodeId,
+      ...(issue.relatedNodeId ? { relatedNodeId: issue.relatedNodeId } : {}),
+      ...(issue.property ? { property: issue.property } : {}),
+      operationType,
+    }),
+  );
+}
 
 interface ElementProperties {
   text: string;
@@ -1078,17 +1101,42 @@ export function App() {
     [],
   );
 
-  const reportSessionDiagnostic = useCallback(
-    (diagnostic: StudioDiagnostic, label: string, options: { reveal?: boolean } = {}) => {
-      setSessionDiagnostics((current) => appendSessionDiagnostic(current, diagnostic));
-      setError(diagnostic.message);
-      addOperation(label, `${diagnostic.code} · ${diagnostic.message}`, "system");
-      if (options.reveal ?? diagnostic.severity === "error") {
+  const reportSessionDiagnostics = useCallback(
+    (
+      nextDiagnostics: readonly StudioDiagnostic[],
+      label: string,
+      options: { reveal?: boolean } = {},
+    ) => {
+      if (nextDiagnostics.length === 0) return;
+      setSessionDiagnostics((current) =>
+        nextDiagnostics.reduce(
+          (next, diagnostic) => appendSessionDiagnostic(next, diagnostic),
+          current,
+        ),
+      );
+      const primary =
+        nextDiagnostics.find((diagnostic) => diagnostic.severity === "error") ?? nextDiagnostics[0];
+      if (!primary) return;
+      setError(primary.message);
+      addOperation(
+        label,
+        nextDiagnostics.length === 1
+          ? `${primary.code} · ${primary.message}`
+          : `${primary.code} · ${nextDiagnostics.length} related issues`,
+        "system",
+      );
+      if (options.reveal ?? nextDiagnostics.some((diagnostic) => diagnostic.severity === "error")) {
         setBottomTab("problems");
         setBottomOpen(true);
       }
     },
     [addOperation],
+  );
+
+  const reportSessionDiagnostic = useCallback(
+    (diagnostic: StudioDiagnostic, label: string, options: { reveal?: boolean } = {}) =>
+      reportSessionDiagnostics([diagnostic], label, options),
+    [reportSessionDiagnostics],
   );
 
   const captureElement = useCallback(
@@ -1452,16 +1500,16 @@ export function App() {
             : first?.type === "InsertNode"
               ? first.node.id
               : undefined;
-        const diagnostic = operationErrorToDiagnostic(caught, {
+        const diagnostics = operationErrorToDiagnostics(caught, {
           documentId: first?.documentId ?? projectRef.current.activeDocumentId,
           ...(nodeId ? { nodeId } : {}),
           ...(first ? { operationType: first.type } : {}),
         });
-        reportSessionDiagnostic(diagnostic, `${label} failed`);
+        reportSessionDiagnostics(diagnostics, `${label} failed`);
         return false;
       }
     },
-    [addOperation, applyOperations, reportSessionDiagnostic],
+    [addOperation, applyOperations, reportSessionDiagnostics],
   );
 
   const commitStagePlacement = useCallback(
@@ -1627,16 +1675,16 @@ export function App() {
       setHovered(null);
       setError(null);
     } catch (caught) {
-      reportSessionDiagnostic(
-        operationErrorToDiagnostic(caught, {
-          documentId: project.activeDocumentId,
-          nodeId: selectedNodeId,
-          operationType: "InsertNode",
-        }),
-        "Duplicate failed",
-      );
+      const diagnostics = isElementStructureIntegrityError(caught)
+        ? structureIntegrityDiagnostics(caught, project.activeDocumentId, "InsertNode")
+        : operationErrorToDiagnostics(caught, {
+            documentId: project.activeDocumentId,
+            nodeId: selectedNodeId,
+            operationType: "InsertNode",
+          });
+      reportSessionDiagnostics(diagnostics, "Duplicate failed");
     }
-  }, [applyModelOperations, project, reportSessionDiagnostic, selectedNodeId]);
+  }, [applyModelOperations, project, reportSessionDiagnostics, selectedNodeId]);
 
   const deleteElement = useCallback(() => {
     if (!selectedNodeId) return;
@@ -1654,16 +1702,16 @@ export function App() {
       setHovered(null);
       setError(null);
     } catch (caught) {
-      reportSessionDiagnostic(
-        operationErrorToDiagnostic(caught, {
-          documentId: project.activeDocumentId,
-          nodeId: selectedNodeId,
-          operationType: "RemoveNode",
-        }),
-        "Delete failed",
-      );
+      const diagnostics = isElementStructureIntegrityError(caught)
+        ? structureIntegrityDiagnostics(caught, project.activeDocumentId, "RemoveNode")
+        : operationErrorToDiagnostics(caught, {
+            documentId: project.activeDocumentId,
+            nodeId: selectedNodeId,
+            operationType: "RemoveNode",
+          });
+      reportSessionDiagnostics(diagnostics, "Delete failed");
     }
-  }, [applyModelOperations, project, reportSessionDiagnostic, selectedNodeId]);
+  }, [applyModelOperations, project, reportSessionDiagnostics, selectedNodeId]);
 
   const structureCapabilities = useMemo(
     () => getElementStructureCapabilities(project, selectedNodeId),
@@ -2624,6 +2672,9 @@ export function App() {
                       const problemNode = diagnostic.nodeId
                         ? problemDocument?.nodes[diagnostic.nodeId]
                         : undefined;
+                      const relatedNode = diagnostic.relatedNodeId
+                        ? problemDocument?.nodes[diagnostic.relatedNodeId]
+                        : undefined;
                       const canLocate = Boolean(
                         problemNode && diagnostic.documentId === project.activeDocumentId,
                       );
@@ -2659,6 +2710,9 @@ export function App() {
                                 {diagnostic.operationType ? ` · ${diagnostic.operationType}` : ""}
                                 {diagnostic.operationIndex !== undefined
                                   ? ` · step ${diagnostic.operationIndex + 1}`
+                                  : ""}
+                                {diagnostic.relatedNodeId
+                                  ? ` · target ${relatedNode?.editor.name ?? relatedNode?.type ?? `#${diagnostic.relatedNodeId}`}${relatedNode ? ` · #${relatedNode.id}` : ""}`
                                   : ""}
                               </span>
                               {diagnostic.occurrences > 1 && <em>×{diagnostic.occurrences}</em>}

@@ -1,4 +1,14 @@
 import { z } from "zod";
+import type { ExternalNodeReference } from "./node-references";
+import { findExternalNodeReferences } from "./node-references";
+
+export {
+  type ExternalNodeReference,
+  type ExternalNodeReferenceField,
+  type ExternalNodeReferencePath,
+  type ExternalNodeReferenceScope,
+  findExternalNodeReferences,
+} from "./node-references";
 
 export const STRATA_PROJECT_VERSION = "0.1" as const;
 const idSchema = z.string().min(1);
@@ -342,6 +352,7 @@ export type ProjectOperationErrorCode =
   | "CYCLE"
   | "INVALID_TAG_TARGET"
   | "BINDING_MISMATCH"
+  | "EXTERNAL_NODE_REFERENCE"
   | "INVARIANT_FAILURE";
 
 export interface ProjectOperationErrorContext {
@@ -349,6 +360,7 @@ export interface ProjectOperationErrorContext {
   documentId?: string | undefined;
   nodeId?: string | undefined;
   operationIndex?: number | undefined;
+  externalNodeReferences?: readonly ExternalNodeReference[] | undefined;
   cause?: unknown | undefined;
 }
 
@@ -359,6 +371,7 @@ export class ProjectOperationError extends Error {
   readonly documentId?: string | undefined;
   readonly nodeId?: string | undefined;
   readonly operationIndex?: number | undefined;
+  readonly externalNodeReferences?: readonly ExternalNodeReference[] | undefined;
 
   constructor(
     code: ProjectOperationErrorCode,
@@ -372,6 +385,7 @@ export class ProjectOperationError extends Error {
     this.documentId = context.documentId;
     this.nodeId = context.nodeId;
     this.operationIndex = context.operationIndex;
+    this.externalNodeReferences = context.externalNodeReferences;
   }
 }
 
@@ -406,6 +420,7 @@ function enrichOperationError(
       documentId: context.documentId ?? error.documentId,
       nodeId: context.nodeId ?? error.nodeId,
       operationIndex: context.operationIndex ?? error.operationIndex,
+      externalNodeReferences: context.externalNodeReferences ?? error.externalNodeReferences,
     });
   }
   return new ProjectOperationError(
@@ -592,6 +607,13 @@ export function applyOperation(input: StrataProject, raw: ProjectOperation): App
         if (isRoot && document.rootNodeIds.length === 1)
           throw new ProjectOperationError("LAST_ROOT", "A document must retain at least one root");
         const removed = subtree(document, node.id);
+        const externalNodeReferences = findExternalNodeReferences(document, node.id);
+        if (externalNodeReferences.length > 0)
+          throw new ProjectOperationError(
+            "EXTERNAL_NODE_REFERENCE",
+            "Cannot remove a subtree that has external node references",
+            { externalNodeReferences },
+          );
         const index = isRoot
           ? document.rootNodeIds.indexOf(node.id)
           : nodeFor(document, node.parentId as string).children.indexOf(node.id);

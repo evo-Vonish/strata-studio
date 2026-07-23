@@ -78,6 +78,13 @@ sources of truth.
   automatically when the Project Model recompiles without them. `ProjectOperationError` supplies
   stable codes and the zero-based failing transaction operation index without exposing partial
   history. Studio compiles once and wraps that compilation in the inert Stage shell.
+- **M1.2 Reference Integrity:** reducer-level typed node-reference scanning blocks every unsafe
+  `RemoveNode`; hierarchy delete preflight also covers supported authored DOM IDREFs. Deep duplicate
+  assigns collision-free authored DOM IDs and rewrites supported internal HTML/ARIA IDREFs.
+  Problems reports every blocker at its surviving source node/property, while blocked commands
+  preserve project, selection, and history. DOM Runtime and Studio share
+  `resolveNodeDomAttributes`, including case-insensitive names, source precedence, and deterministic
+  same-source collision diagnostics.
 
 The active editor data path is:
 
@@ -92,16 +99,14 @@ Inspector / Stage / Agent intent
 
 ### Active next slice
 
-With diagnostics and conservative Stage reorder complete, finish integrity work before Blueprint
-execution:
+With diagnostics, conservative Stage reorder, and Reference Integrity complete, finish the
+remaining structural boundary before Blueprint execution:
 
-1. guard deletion against external node references and handle authored DOM IDs and IDREFs during
-   duplicate;
-2. define an explicit migration/diagnostic path for imported documents without a valid Box page
+1. define an explicit migration/diagnostic path for imported documents without a valid Box page
    root;
-3. extend Stage placement from its current vertical semantic baseline to Flex/Grid axis-aware
+2. extend Stage placement from its current vertical semantic baseline to Flex/Grid axis-aware
    feedback only after those invariants are covered;
-4. then begin `Button Click -> Set Text` in the minimal Blueprint workspace.
+3. then begin `Button Click -> Set Text` in the minimal Blueprint workspace.
 
 ## Important implementation boundaries
 
@@ -122,10 +127,10 @@ execution:
 - Hierarchy structure shortcuts run only while the hierarchy/tree toolbar owns focus; Inspector and
   search inputs retain native editing behavior.
 - Stage reorder currently uses explicit mode and conservative vertical semantics; Flex/Grid
-  axis-aware placement, auto-scroll, and drag ghosts are not complete yet. Problems covers runtime
-  warnings plus session operation/structure failures, but external-reference repair, DOM IDREF
-  validation, imported-root migration, cross-document/property-level diagnostic location, and
-  runtime Blueprint execution are not complete yet.
+  axis-aware placement, auto-scroll, and drag ghosts are not complete yet. Reference Integrity
+  v0.1 forbids force-delete and treats `binding`, `raw`, CSS `url()`, `usemap`, and cross-document
+  references as deferred opaque scope. Imported-root migration, cross-document/property-level
+  diagnostic location, and runtime Blueprint execution are not complete yet.
 
 ## Repository map
 

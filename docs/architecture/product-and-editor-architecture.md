@@ -25,9 +25,14 @@ deterministic Runtime warnings and session operation/structure failures share a 
 accessible list with active-document node location. Runtime entries recover when the model
 recompiles cleanly, while a successful transaction clears session failures without creating
 history for a failed transaction. Studio uses one compilation for both diagnostics and the inert
-Stage shell. Remaining work is imported-root migration, external-reference and DOM IDREF integrity
-checks, cross-document/property-level diagnostic location, and later layout-aware refinement. The
-minimal Blueprint runtime begins only after this structural loop is reliable.
+Stage shell. [Reference Integrity v0.1](../specs/reference-integrity-v0.1.md) is now current: the
+reducer rejects deletion with surviving typed node references, hierarchy preflight also recognizes
+supported authored DOM IDREFs, and duplicate gives valid authored DOM IDs unique `--copy` values
+while rewriting a conservative set of internal HTML/ARIA IDREFs. Problems locates blocked commands
+at each surviving reference source. It deliberately has no force-delete and preserves opaque
+references for later typed support. Remaining work is imported-root migration,
+cross-document/property-level diagnostic location, and later layout-aware refinement. The minimal
+Blueprint runtime begins only after this structural loop is reliable.
 
 ## Product statement
 

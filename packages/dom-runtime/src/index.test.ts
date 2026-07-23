@@ -101,6 +101,52 @@ describe("DOM runtime", () => {
       '<x-imported-widget data-strata-node-id="image" data-source="import"></x-imported-widget>',
     );
   });
+  it("canonicalizes attribute names and applies one source-precedence contract", () => {
+    const input = project();
+    const root = input.documents.page?.nodes.root;
+    if (!root) throw new Error("fixture missing");
+    root.passthrough = {
+      unknownAttributes: { id: "shadow-id", href: "#shadow-target" },
+    };
+    root.attributes = {
+      ID: { kind: "literal", value: "effective-id" },
+      HREF: { kind: "literal", value: "/effective-target" },
+    };
+    root.accessibility.aria = {
+      "ARIA-CONTROLS": { kind: "literal", value: "panel" },
+    };
+
+    const result = compileDocument(input);
+
+    expect(result.html).toContain('id="effective-id"');
+    expect(result.html).toContain('href="/effective-target"');
+    expect(result.html).toContain('aria-controls="panel"');
+    expect(result.html).not.toContain("shadow-id");
+    expect(result.html).not.toContain("shadow-target");
+    expect(result.html.match(/\sid=/g)).toHaveLength(1);
+    expect(result.html.match(/\shref=/g)).toHaveLength(1);
+  });
+  it("diagnoses case-insensitive same-source attribute collisions deterministically", () => {
+    const input = project();
+    const root = input.documents.page?.nodes.root;
+    if (!root) throw new Error("fixture missing");
+    root.attributes = {
+      HREF: { kind: "literal", value: "/upper" },
+      href: { kind: "literal", value: "/canonical" },
+    };
+
+    const result = compileDocument(input);
+
+    expect(result.html).toContain('href="/canonical"');
+    expect(result.html).not.toContain("/upper");
+    expect(result.warnings).toContainEqual(
+      expect.objectContaining({
+        code: "DUPLICATE_ATTRIBUTE",
+        nodeId: "root",
+        property: "href",
+      }),
+    );
+  });
   it("compiles deterministic scoped CSS", () => {
     const input = project();
     const node = input.documents.page?.nodes.root;

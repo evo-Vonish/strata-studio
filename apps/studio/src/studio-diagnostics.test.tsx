@@ -8,6 +8,7 @@ import {
   mergeDiagnostics,
   OPERATION_FAILED_CODE,
   operationErrorToDiagnostic,
+  operationErrorToDiagnostics,
   type StudioDiagnostic,
 } from "./studio-diagnostics";
 
@@ -111,6 +112,95 @@ describe("studio diagnostics", () => {
       operationType: "SetStyle",
       operationIndex: 0,
     });
+  });
+
+  it("expands external node references into distinct source-locatable diagnostics", () => {
+    const error = new ProjectOperationError(
+      "EXTERNAL_NODE_REFERENCE",
+      "The subtree is still referenced",
+      {
+        documentId: "home",
+        nodeId: "target-root",
+        operationType: "RemoveNode",
+        operationIndex: 1,
+        externalNodeReferences: [
+          {
+            sourceNodeId: "source",
+            targetNodeId: "target-root",
+            field: "attributes",
+            path: ["attributes", "controls"],
+          },
+          {
+            sourceNodeId: "source",
+            targetNodeId: "target-child",
+            field: "style",
+            path: ["styleRules", "properties", "--target"],
+            scope: { breakpoint: "mobile", state: "hover" },
+          },
+        ],
+      },
+    );
+
+    const diagnostics = operationErrorToDiagnostics(error, {
+      documentId: "fallback",
+      operationType: "RemoveNode",
+    });
+
+    expect(diagnostics).toHaveLength(2);
+    expect(diagnostics[0]).toMatchObject({
+      code: "EXTERNAL_NODE_REFERENCE",
+      documentId: "home",
+      nodeId: "source",
+      relatedNodeId: "target-root",
+      property: "attributes.controls",
+      operationType: "RemoveNode",
+      operationIndex: 1,
+    });
+    expect(diagnostics[1]).toMatchObject({
+      nodeId: "source",
+      relatedNodeId: "target-child",
+      property: "styleRules.properties.--target [breakpoint=mobile, state=hover]",
+    });
+    expect(diagnostics[0]?.id).not.toBe(diagnostics[1]?.id);
+  });
+
+  it("keeps different style-scope fields as distinct diagnostic locations", () => {
+    const error = new ProjectOperationError(
+      "EXTERNAL_NODE_REFERENCE",
+      "The subtree is still referenced",
+      {
+        documentId: "home",
+        nodeId: "target",
+        operationType: "RemoveNode",
+        externalNodeReferences: [
+          {
+            sourceNodeId: "source",
+            targetNodeId: "target",
+            field: "style",
+            path: ["styleRules", "properties", "--target"],
+            scope: { breakpoint: "mobile", state: "hover" },
+          },
+          {
+            sourceNodeId: "source",
+            targetNodeId: "target",
+            field: "style",
+            path: ["styleRules", "properties", "--target"],
+            scope: { colorMode: "mobile", variant: "hover" },
+          },
+        ],
+      },
+    );
+
+    const diagnostics = operationErrorToDiagnostics(error, {
+      documentId: "home",
+      operationType: "RemoveNode",
+    });
+
+    expect(diagnostics.map((item) => item.property)).toEqual([
+      "styleRules.properties.--target [breakpoint=mobile, state=hover]",
+      "styleRules.properties.--target [colorMode=mobile, variant=hover]",
+    ]);
+    expect(new Set(diagnostics.map((item) => item.id)).size).toBe(2);
   });
 
   it("deduplicates groups by stable ID and sorts severity, location, then code", () => {

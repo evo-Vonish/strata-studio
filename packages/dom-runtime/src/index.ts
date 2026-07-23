@@ -13,6 +13,7 @@ export interface CompileWarning {
     | "BLOCKED_CSS_VALUE"
     | "BLOCKED_TAG"
     | "BLOCKED_URL"
+    | "DUPLICATE_ATTRIBUTE"
     | "INVALID_ATTRIBUTE"
     | "INVALID_STYLE_PROPERTY"
     | "MISSING_ASSET"
@@ -41,6 +42,28 @@ export interface StageDocumentOptions extends CompileOptions {
 
 export interface StageShellOptions {
   title?: string;
+}
+
+export type DomAttributeSource = "passthrough" | "attributes" | "aria" | "role";
+
+export interface ResolvedDomAttribute {
+  /** Canonical ASCII-lowercase HTML attribute name. */
+  name: string;
+  value: StrataValue | string;
+  source: DomAttributeSource;
+  /** Original model key so callers can safely update the effective authored entry. */
+  key: string;
+}
+
+export interface DomAttributeConflict {
+  name: string;
+  source: Exclude<DomAttributeSource, "role">;
+  keys: readonly string[];
+}
+
+export interface DomAttributeResolution {
+  attributes: readonly ResolvedDomAttribute[];
+  conflicts: readonly DomAttributeConflict[];
 }
 
 const VOID_ELEMENTS = new Set([
@@ -83,6 +106,85 @@ const DEFAULT_BREAKPOINTS = {
   tablet: "(min-width: 768px) and (max-width: 1023px)",
   mobile: "(max-width: 767px)",
 } as const;
+
+function compareText(a: string, b: string): number {
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
+
+function asciiLowercase(value: string): string {
+  return value.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+}
+
+function canonicalAttributeName(source: DomAttributeSource, key: string): string {
+  const name = asciiLowercase(key);
+  if (source !== "aria") return name;
+  return name.startsWith("aria-") ? name : `aria-${name}`;
+}
+
+function compareSourceEntries(a: ResolvedDomAttribute, b: ResolvedDomAttribute): number {
+  const aCanonicalSpelling = a.key === asciiLowercase(a.key) ? 0 : 1;
+  const bCanonicalSpelling = b.key === asciiLowercase(b.key) ? 0 : 1;
+  return aCanonicalSpelling - bCanonicalSpelling || compareText(a.key, b.key);
+}
+
+/**
+ * Resolves the one effective value for each HTML attribute name.
+ *
+ * Source precedence is passthrough → typed attributes → accessibility ARIA → role. Attribute
+ * names are ASCII case-insensitive, and same-source spelling collisions are reported while a
+ * deterministic canonical/lowercase spelling wins for rendering and editor analysis.
+ */
+export function resolveNodeDomAttributes(node: StrataNode): DomAttributeResolution {
+  const effective = new Map<string, ResolvedDomAttribute>();
+  const conflicts: DomAttributeConflict[] = [];
+
+  const addSource = (
+    source: Exclude<DomAttributeSource, "role">,
+    entries: readonly [string, StrataValue | string][],
+  ) => {
+    const grouped = new Map<string, ResolvedDomAttribute[]>();
+    for (const [key, value] of entries) {
+      const name = canonicalAttributeName(source, key);
+      const group = grouped.get(name) ?? [];
+      group.push({ name, value, source, key });
+      grouped.set(name, group);
+    }
+    for (const [name, group] of grouped) {
+      group.sort(compareSourceEntries);
+      const selected = group[0];
+      if (!selected) continue;
+      effective.set(name, selected);
+      if (group.length > 1)
+        conflicts.push({
+          name,
+          source,
+          keys: group.map((entry) => entry.key),
+        });
+    }
+  };
+
+  addSource("passthrough", Object.entries(node.passthrough?.unknownAttributes ?? {}));
+  addSource("attributes", Object.entries(node.attributes));
+  addSource("aria", Object.entries(node.accessibility.aria));
+  if (node.accessibility.role)
+    effective.set("role", {
+      name: "role",
+      value: node.accessibility.role,
+      source: "role",
+      key: "role",
+    });
+
+  return {
+    attributes: [...effective.values()].sort((a, b) => compareText(a.name, b.name)),
+    conflicts: conflicts.sort(
+      (a, b) =>
+        compareText(a.name, b.name) ||
+        compareText(a.source, b.source) ||
+        compareText(a.keys.join("\u0000"), b.keys.join("\u0000")),
+    ),
+  };
+}
 
 function warning(
   warnings: CompileWarning[],
@@ -290,13 +392,16 @@ function attributeEntries(
   options: CompileOptions,
   warnings: CompileWarning[],
 ): string[] {
-  const values = new Map<string, StrataValue | string>();
-  for (const [name, value] of Object.entries(node.passthrough?.unknownAttributes ?? {}))
-    values.set(name, value);
-  for (const [name, value] of Object.entries(node.attributes)) values.set(name, value);
-  for (const [name, value] of Object.entries(node.accessibility.aria))
-    values.set(name.startsWith("aria-") ? name : `aria-${name}`, value);
-  if (node.accessibility.role) values.set("role", node.accessibility.role);
+  const resolution = resolveNodeDomAttributes(node);
+  const values = new Map(resolution.attributes.map(({ name, value }) => [name, value] as const));
+  for (const conflict of resolution.conflicts)
+    warning(
+      warnings,
+      "DUPLICATE_ATTRIBUTE",
+      `Attribute '${conflict.name}' has multiple ${conflict.source} spellings: ${conflict.keys.join(", ")}`,
+      node.id,
+      conflict.name,
+    );
 
   const generatedClass = node.styleRules.length > 0 ? className(node.id) : undefined;
   const authoredClass = values.get("class");
@@ -319,18 +424,9 @@ function attributeEntries(
     const combined = [authored, generatedClass].filter(Boolean).join(" ");
     if (combined) output.push(`class="${escapeHtml(combined)}"`);
   }
-  for (const [originalName, value] of [...values.entries()].sort(([a], [b]) =>
-    a.localeCompare(b),
-  )) {
-    const name = originalName.toLowerCase();
+  for (const [name, value] of values) {
     if (!/^[a-z_:][a-z0-9:._-]*$/.test(name)) {
-      warning(
-        warnings,
-        "INVALID_ATTRIBUTE",
-        `Invalid attribute '${originalName}'`,
-        node.id,
-        originalName,
-      );
+      warning(warnings, "INVALID_ATTRIBUTE", `Invalid attribute '${name}'`, node.id, name);
       continue;
     }
     if (name.startsWith("on") || name === "srcdoc") {

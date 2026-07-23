@@ -2,7 +2,7 @@
 
 Last updated: 2026-07-23
 
-Status: implemented M1.2 diagnostics slice
+Status: implemented M1.2 diagnostics and Reference Integrity Problems slices
 
 ## Objective
 
@@ -11,8 +11,10 @@ projection of the canonical Project Model and the current editor session; it is 
 project data, a second validation store, or an undoable operation.
 
 This slice surfaces deterministic DOM Runtime warnings and failures at operation and structure
-boundaries. It deliberately does not yet perform reference-integrity analysis, DOM IDREF
-analysis, imported-root migration, cross-document navigation, or property-level focus.
+boundaries. Reference Integrity v0.1 adds the required blocked-command behavior: external typed
+node references, invalid authored DOM IDs, and ambiguous authored DOM IDs must become actionable
+Problems records. Imported-root migration, cross-document navigation, and property-level Inspector
+focus remain outside this slice.
 
 ## `StudioDiagnostic` contract
 
@@ -30,6 +32,7 @@ interface StudioDiagnostic {
   message: string;
   documentId: string;
   nodeId?: string;
+  relatedNodeId?: string;
   property?: string;
   operationType?: string;
   operationIndex?: number;
@@ -38,9 +41,9 @@ interface StudioDiagnostic {
 ```
 
 `id` identifies the underlying problem rather than an individual report. It is deterministic from
-the source, location, operation context, and code. Equal session reports are grouped and increment
+the source, primary and related location, operation context, and code. Equal session reports are grouped and increment
 `occurrences`; distinct session diagnostics are capped at 100 records. The merged list is stable:
-errors, then warnings, then informational records; ties sort by document, node, property,
+errors, then warnings, then informational records; ties sort by document, node, related node, property,
 operation position/type, code, message, and ID.
 
 Runtime compiler warnings are normalized with `source: "runtime"` and `severity: "warning"` while
@@ -57,7 +60,8 @@ displayed as `OPERATION_FAILED` without a stack trace.
 INVALID_PROJECT       INVALID_OPERATION      UNKNOWN_DOCUMENT
 UNKNOWN_NODE          INVALID_INDEX          DUPLICATE_ID
 INVALID_SUBTREE       LAST_ROOT              CYCLE
-INVALID_TAG_TARGET    BINDING_MISMATCH       INVARIANT_FAILURE
+INVALID_TAG_TARGET    BINDING_MISMATCH       EXTERNAL_NODE_REFERENCE
+INVARIANT_FAILURE
 ```
 
 The error may carry `operationType`, resolved `documentId`, `nodeId`, and `operationIndex`.
@@ -109,6 +113,15 @@ navigation are deferred.
 The zero state says that the active project has no current runtime warnings or session failures. It
 does not claim to prove every future validation domain.
 
+### Reference Integrity command failures
+
+When a delete or duplicate is blocked by [Reference Integrity v0.1](reference-integrity-v0.1.md),
+Problems identifies every **source** node and property/path. Locate selects that surviving source,
+not the deletion target or a substituted page root; `relatedNodeId` labels the target separately.
+`EXTERNAL_NODE_REFERENCE`, `EXTERNAL_DOM_ID_REFERENCE`, `INVALID_AUTHORED_DOM_ID`, and
+`DUPLICATE_AUTHORED_DOM_ID` are session-only error records: no project or history entry exists for
+the rejected command. A force-delete control is intentionally absent.
+
 ## Compile once, then build the inert Stage shell
 
 `compileDocument(project, documentId)` yields HTML, CSS, and warnings once per active project
@@ -125,8 +138,6 @@ of the HTML/CSS passed to the shell; Problems must not weaken the preview bounda
 
 ## Deferred scope
 
-- external node-reference checks and repair before delete or duplicate;
-- authored DOM ID and IDREF collision/reference checks during duplicate;
 - explicit migration or diagnostics for imported documents without a valid Box page root;
 - cross-document diagnostic navigation and property-specific Inspector focus;
 - persistent/dismissible diagnostics, Console aggregation, and diagnostic export;

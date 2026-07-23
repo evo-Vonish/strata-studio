@@ -1,6 +1,6 @@
 # Operation Protocol v0.1
 
-Status: M1.1 implementation contract
+Status: M1.1 implementation contract; Reference Integrity v0.1 extension implemented
 
 ## Objective
 
@@ -48,11 +48,18 @@ forward `InsertNode` snapshot.
 
 ### RemoveNode
 
-M1.1 removes the selected node and its subtree. The reducer captures the full normalized subtree,
-original parent/root location, and index for exact inversion.
+`RemoveNode` removes the selected node and its subtree only when no surviving node in the same
+document holds a typed `StrataValue.reference` into that subtree. The reducer is the final
+Reference Integrity boundary, independent of the command producer. It scans content, attributes,
+style properties, and accessibility ARIA values. An external target fails with
+`EXTERNAL_NODE_REFERENCE` and carries stable reference-location metadata; the operation and its
+enclosing transaction remain atomic.
 
-Its inverse restores every node and original order. No external references are silently rewritten;
-reference validation may report them separately.
+When allowed, the reducer captures the full normalized subtree, original parent/root location, and
+index for exact inversion.
+
+Its inverse restores every node and original order. No external references are silently rewritten
+and v0.1 has no bypass/force-delete. See [Reference Integrity v0.1](reference-integrity-v0.1.md).
 
 ### MoveNode
 
@@ -133,7 +140,8 @@ M1.1 rejects malformed operations with `ProjectOperationError` or actionable red
 Missing targets, duplicate IDs, invalid indices, cycles, and invariant violations never produce a
 partial result. The stable codes are `INVALID_PROJECT`, `INVALID_OPERATION`, `UNKNOWN_DOCUMENT`,
 `UNKNOWN_NODE`, `INVALID_INDEX`, `DUPLICATE_ID`, `INVALID_SUBTREE`, `LAST_ROOT`, `CYCLE`,
-`INVALID_TAG_TARGET`, `BINDING_MISMATCH`, and `INVARIANT_FAILURE`.
+`INVALID_TAG_TARGET`, `BINDING_MISMATCH`, `EXTERNAL_NODE_REFERENCE`, and
+`INVARIANT_FAILURE`.
 
 Each error may include `operationType`, resolved `documentId`, and `nodeId`. `applyTransaction`
 enriches the first failure with its zero-based `operationIndex`; it throws instead of returning the
@@ -149,6 +157,7 @@ declare that behavior in its contract.
 - every operation leaves its input object unchanged;
 - apply then inverse restores deep equality;
 - subtree deletion restores order and content exactly;
+- external typed node references block `RemoveNode` and leave the entire transaction uncommitted;
 - same-parent and cross-parent moves have unambiguous indices;
 - invalid cycles and duplicate IDs fail without partial mutation;
 - absent, unset, and authored values remain distinct through undo;

@@ -13,6 +13,8 @@ document. It never becomes a second source of truth.
   restrictive Content Security Policy;
 - `buildStageDocumentFromCompiled(compiled, options?)` wraps an existing deterministic
   `CompiledDocument` in that same inert Stage shell, for callers that also consume `warnings`;
+- `resolveNodeDomAttributes(node)` returns the canonical effective HTML attributes and
+  same-source name conflicts used by both rendering and Studio reference analysis;
 - `compileDocument` and `buildStageDocument` validate project input through
   `@strata/project-model` before rendering;
 - equivalent project state produces equivalent output.
@@ -21,6 +23,12 @@ Every rendered element carries `data-strata-node-id`. Authored style rules recei
 generated classes derived from the same node ID. The editor uses the data attribute to map pointer
 selection in the iframe back to the canonical node without relying on authored classes or DOM
 position.
+
+HTML attribute names are resolved as ASCII-case-insensitive before serialization. The single
+effective value follows the source order passthrough, typed attributes, accessibility ARIA, then
+explicit role; later sources win. A same-source case collision such as `HREF` plus `href` produces
+`DUPLICATE_ATTRIBUTE`, and the canonical lowercase spelling wins deterministically. The runtime
+therefore emits at most one serialized attribute for each canonical name.
 
 ## Values and scopes
 
@@ -84,6 +92,6 @@ second compilation or changing the CSP/sandbox boundary.
 ## Verification
 
 Package tests cover deterministic output, nested rendering, scoped styles, typed values, assets,
-escaping, and unsafe input blocking. Studio integration tests render the React editor, verify that
-the Stage document contains stable model IDs, commit a schema-generated width edit, and verify exact
-undo through persisted Project state.
+escaping, unsafe input blocking, and canonical attribute precedence/collision behavior. Studio
+integration tests render the React editor, verify that the Stage document contains stable model
+IDs, commit a schema-generated width edit, and verify exact undo through persisted Project state.

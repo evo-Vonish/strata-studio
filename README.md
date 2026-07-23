@@ -52,9 +52,15 @@ capture loss, blur, a tool switch, and leaving Stage cancel without a transactio
 lists Runtime warnings and session operation/structure failures with counts and active-document
 node Locate controls. A successful transaction clears session failures; a model change that
 removes a compiler warning clears it automatically. Studio compiles once for both Problems and the
-inert Stage shell. Remaining M1.2 work is external-reference and DOM IDREF integrity handling for
-delete/duplicate, imported page-root migration, cross-document/property-level diagnostic location,
-and later Flex/Grid axis-aware placement, auto-scroll, and drag ghosts.
+inert Stage shell. Reference Integrity v0.1 is now implemented: typed external node references
+block subtree deletion at both Studio preflight and reducer boundaries; supported authored DOM
+IDREFs also block unsafe hierarchy deletion; and duplicate gives authored DOM IDs deterministic,
+collision-free values while rewriting supported internal IDREFs. Problems locates every blocker at
+its surviving source. DOM Runtime and Studio use one canonical effective-attribute resolver, so
+case variants and shadowed imported attributes behave identically in the Stage and integrity
+checks. See [Reference Integrity v0.1](docs/specs/reference-integrity-v0.1.md).
+Remaining M1.2 work is imported page-root migration, cross-document/property-level diagnostic
+location, and later Flex/Grid axis-aware placement, auto-scroll, and drag ghosts.
 
 ## E0 Element Extractor
 
@@ -99,6 +105,7 @@ The preview runs without scripts or pointer interaction and carries a restrictiv
 | [M1 technical specifications](docs/specs/m1-acceptance.md) | Project Model, Property Registry, DOM Runtime, operation protocol, and milestone gates |
 | [DOM Runtime v0.1](docs/specs/dom-runtime-v0.1.md) | Deterministic rendering, stable node identity, scope mapping, and preview security boundary |
 | [Studio Diagnostics v0.1](docs/specs/diagnostics-v0.1.md) | Problems records, lifetimes, node location, operation errors, and compile-once Stage integration |
+| [Reference Integrity v0.1](docs/specs/reference-integrity-v0.1.md) | Typed node-reference delete boundary, authored DOM ID/IDREF duplicate rules, and deferred scope |
 | [Stage Structure Authoring v0.1](docs/specs/stage-structure-authoring-v0.1.md) | Primitive creation, stable IDs, placement rules, Add Element UX, and current structural boundaries |
 | [Element extractor upstream research](docs/research/element-extractor-upstreams.md) | Pinned upstream study and E0 extraction decisions |
 
@@ -137,13 +144,11 @@ No upstream repository is vendored into this repository. Research clones live ou
 
 ## Next vertical slice
 
-The next slice completes integrity work before Blueprint execution:
+The next slice completes the remaining structural boundary before Blueprint execution:
 
-1. diagnose external node references before subtree deletion and authored DOM IDs/IDREFs before
-   duplicate;
-2. define explicit migration for imported documents whose first root is not a valid Box container;
-3. evolve the Stage's current vertical placement feedback to Flex/Grid axis-aware feedback only
+1. define explicit migration for imported documents whose first root is not a valid Box container;
+2. evolve the Stage's current vertical placement feedback to Flex/Grid axis-aware feedback only
    after those invariants are covered;
-4. then begin `Button Click -> Set Text` in the minimal Blueprint workspace.
+3. then begin `Button Click -> Set Text` in the minimal Blueprint workspace.
 
 This slice closes the remaining M1.2 structural gap while keeping every edit on the Project Model.

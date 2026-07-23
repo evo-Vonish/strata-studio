@@ -393,6 +393,125 @@ describe("Strata Studio model integration", () => {
     expect(selectedLayer(container).textContent).toContain("Primary action");
   });
 
+  it("duplicates authored DOM identity with a stable collision-free snapshot", async () => {
+    const input = requiredStoredProject();
+    const primaryAction = homeDocument(input).nodes["primary-action"];
+    const headline = homeDocument(input).nodes.headline;
+    if (!primaryAction || !headline) throw new Error("DOM identity fixture is incomplete");
+    primaryAction.attributes.id = { kind: "literal", value: "primary-cta" };
+    headline.attributes.id = { kind: "literal", value: "primary-cta--copy" };
+    await remountWithProject(input);
+
+    const selected = selectedLayer(container);
+    selected.focus();
+    await act(async () =>
+      selected.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "d",
+          ctrlKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    );
+
+    const duplicated = requiredStoredProject();
+    const duplicateId = homeDocument(duplicated).nodes.hero?.children.at(-1);
+    if (!duplicateId) throw new Error("DOM identity duplicate is missing");
+    expect(homeDocument(duplicated).nodes[duplicateId]?.attributes.id).toEqual({
+      kind: "literal",
+      value: "primary-cta--copy-2",
+    });
+    expect(container.querySelector<HTMLIFrameElement>(".model-stage-frame")?.srcdoc).toContain(
+      'id="primary-cta--copy-2"',
+    );
+
+    const snapshot = structuredClone(homeDocument(duplicated).nodes[duplicateId]);
+    const undo = container.querySelector<HTMLButtonElement>('button[aria-label="Undo"]');
+    const redo = container.querySelector<HTMLButtonElement>('button[aria-label="Redo"]');
+    if (!undo || !redo) throw new Error("History controls are missing");
+    await act(async () => undo.click());
+    expect(homeDocument(requiredStoredProject()).nodes[duplicateId]).toBeUndefined();
+    await act(async () => redo.click());
+    expect(homeDocument(requiredStoredProject()).nodes[duplicateId]).toEqual(snapshot);
+  });
+
+  it("blocks referenced deletion and locates every surviving reference source", async () => {
+    const input = requiredStoredProject();
+    const primaryAction = homeDocument(input).nodes["primary-action"];
+    const visualCard = homeDocument(input).nodes["visual-card"];
+    if (!primaryAction || !visualCard) throw new Error("Reference delete fixture is incomplete");
+    primaryAction.attributes.id = { kind: "literal", value: "primary-cta" };
+    visualCard.attributes.target = { kind: "reference", nodeId: "primary-action" };
+    visualCard.attributes["aria-controls"] = { kind: "literal", value: "primary-cta" };
+    await remountWithProject(input);
+
+    const before = structuredClone(requiredStoredProject());
+    const selected = selectedLayer(container);
+    const undo = container.querySelector<HTMLButtonElement>('button[aria-label="Undo"]');
+    if (!undo) throw new Error("Undo control is missing");
+    expect(selected.textContent).toContain("Primary action");
+    expect(undo.disabled).toBe(true);
+    selected.focus();
+    await act(async () =>
+      selected.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Delete",
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    );
+
+    expect(requiredStoredProject()).toEqual(before);
+    expect(selectedLayer(container).textContent).toContain("Primary action");
+    expect(undo.disabled).toBe(true);
+    expect(
+      container.querySelector<HTMLButtonElement>('button[aria-label="Open Problems: 2"]'),
+    ).not.toBeNull();
+    const rows = [...container.querySelectorAll<HTMLElement>(".problem-row")];
+    expect(rows.map((row) => row.textContent).join("\n")).toContain("EXTERNAL_NODE_REFERENCE");
+    expect(rows.map((row) => row.textContent).join("\n")).toContain("EXTERNAL_DOM_ID_REFERENCE");
+    expect(rows.every((row) => row.textContent?.includes("Signal visual"))).toBe(true);
+    expect(rows.every((row) => row.textContent?.includes("Primary action"))).toBe(true);
+
+    const locate = rows[0]?.querySelector<HTMLButtonElement>(".problem-locate");
+    if (!locate) throw new Error("Reference source Locate action is missing");
+    await act(async () => locate.click());
+    expect(selectedLayer(container).textContent).toContain("Signal visual");
+  });
+
+  it("blocks duplicate when an authored DOM id is unsafe", async () => {
+    const input = requiredStoredProject();
+    const primaryAction = homeDocument(input).nodes["primary-action"];
+    if (!primaryAction) throw new Error("Unsafe DOM id fixture is missing");
+    primaryAction.attributes.id = { kind: "literal", value: "invalid id" };
+    await remountWithProject(input);
+
+    const before = structuredClone(requiredStoredProject());
+    const selected = selectedLayer(container);
+    const undo = container.querySelector<HTMLButtonElement>('button[aria-label="Undo"]');
+    if (!undo) throw new Error("Undo control is missing");
+    selected.focus();
+    await act(async () =>
+      selected.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "d",
+          ctrlKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    );
+
+    expect(requiredStoredProject()).toEqual(before);
+    expect(selectedLayer(container).textContent).toContain("Primary action");
+    expect(undo.disabled).toBe(true);
+    expect(container.querySelector(".problem-row")?.textContent).toContain(
+      "INVALID_AUTHORED_DOM_ID",
+    );
+  });
+
   it("reorders an element on the Stage with a preview and exact undo/redo", async () => {
     const reorder = container.querySelector<HTMLButtonElement>(
       'button[aria-label="Reorder elements (M)"]',

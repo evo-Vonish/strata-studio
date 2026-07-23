@@ -16,6 +16,7 @@ export interface StudioDiagnostic {
   message: string;
   documentId: string;
   nodeId?: string;
+  relatedNodeId?: string;
   property?: string;
   operationType?: string;
   operationIndex?: number;
@@ -49,6 +50,7 @@ function createDiagnosticId(diagnostic: Omit<StudioDiagnostic, "id" | "occurrenc
     diagnostic.source,
     diagnostic.documentId,
     diagnostic.nodeId,
+    diagnostic.relatedNodeId,
     diagnostic.property,
     diagnostic.operationType,
     diagnostic.operationIndex,
@@ -135,6 +137,53 @@ export function operationErrorToDiagnostic(
   });
 }
 
+function externalReferenceProperty(
+  reference: NonNullable<ProjectOperationError["externalNodeReferences"]>[number],
+): string {
+  const path = reference.path.join(".");
+  if (!reference.scope) return path;
+  const scope: string[] = [];
+  if (reference.scope.breakpoint !== undefined)
+    scope.push(`breakpoint=${reference.scope.breakpoint}`);
+  if (reference.scope.state !== undefined) scope.push(`state=${reference.scope.state}`);
+  if (reference.scope.colorMode !== undefined) scope.push(`colorMode=${reference.scope.colorMode}`);
+  if (reference.scope.variant !== undefined) scope.push(`variant=${reference.scope.variant}`);
+  return scope.length > 0 ? `${path} [${scope.join(", ")}]` : `${path} [base]`;
+}
+
+/**
+ * Expands a structured transaction failure into actionable rows when it contains multiple
+ * reference findings. Other failures retain the one-error/one-row contract.
+ */
+export function operationErrorToDiagnostics(
+  error: unknown,
+  fallback: OperationDiagnosticContext,
+): StudioDiagnostic[] {
+  if (
+    isProjectOperationError(error) &&
+    error.code === "EXTERNAL_NODE_REFERENCE" &&
+    error.externalNodeReferences?.length
+  ) {
+    const context = errorContext(error, fallback);
+    return error.externalNodeReferences.map((reference) => {
+      const property = externalReferenceProperty(reference);
+      return withId({
+        severity: "error",
+        source: "operation",
+        code: error.code,
+        message: `Cannot delete the subtree while '${reference.sourceNodeId}' references '${reference.targetNodeId}' through ${property}.`,
+        documentId: context.documentId,
+        nodeId: reference.sourceNodeId,
+        relatedNodeId: reference.targetNodeId,
+        property,
+        ...(context.operationType ? { operationType: context.operationType } : {}),
+        ...(context.operationIndex !== undefined ? { operationIndex: context.operationIndex } : {}),
+      });
+    });
+  }
+  return [operationErrorToDiagnostic(error, fallback)];
+}
+
 function compareOptionalString(a: string | undefined, b: string | undefined): number {
   if (a === b) return 0;
   if (a === undefined) return 1;
@@ -158,6 +207,8 @@ export function compareDiagnostics(a: StudioDiagnostic, b: StudioDiagnostic): nu
   if (documentId !== 0) return documentId;
   const nodeId = compareOptionalString(a.nodeId, b.nodeId);
   if (nodeId !== 0) return nodeId;
+  const relatedNodeId = compareOptionalString(a.relatedNodeId, b.relatedNodeId);
+  if (relatedNodeId !== 0) return relatedNodeId;
   const property = compareOptionalString(a.property, b.property);
   if (property !== 0) return property;
   const operationIndex = compareOptionalNumber(a.operationIndex, b.operationIndex);

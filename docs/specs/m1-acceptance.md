@@ -11,6 +11,7 @@ Related specifications:
 - [Operation Protocol v0.1](operation-protocol-v0.1.md)
 - [DOM Runtime v0.1](dom-runtime-v0.1.md)
 - [Studio Diagnostics v0.1](diagnostics-v0.1.md)
+- [Reference Integrity v0.1](reference-integrity-v0.1.md)
 
 ## Milestone outcome
 
@@ -44,8 +45,10 @@ touch/pen activation threshold, valid/disabled Before/Inside/After previews, Box
 placement, and one latest-model-validated `MoveNode` on pointer-up. It retains selection and exact
 Undo/Redo; Escape, pointer cancellation or capture loss, blur, tool changes, and leaving Stage
 cancel without a transaction.
-Imported-root migration, external node-reference and DOM IDREF integrity checks, and richer
-Flex/Grid axis-aware placement remain before this gate is complete.
+Reference Integrity v0.1 now implements the typed node-reference delete boundary, supported DOM
+IDREF hierarchy preflight, authored DOM ID/IDREF duplicate rules, and source-located Problems.
+Imported-root migration and richer Flex/Grid axis-aware placement remain before this gate is
+complete.
 
 - create an empty page and insert the five initial elements;
 - select through a stable Strata node ID;
@@ -70,9 +73,9 @@ rows, accessible tabs, and active-document node Locate are implemented. The rend
 and uses that result both for runtime warnings and the inert Stage shell. See
 [Studio Diagnostics v0.1](diagnostics-v0.1.md).
 
-The remaining M1.2 integrity boundary is external node-reference checks, authored DOM ID/IDREF
-checks during duplicate, and imported-root migration. Cross-document navigation and property-level
-diagnostic location are not part of this slice.
+Reference Integrity v0.1 is implemented and verified. The remaining M1.2 integrity boundary is
+imported-root migration. Cross-document navigation and property-level diagnostic location are not
+part of this slice.
 
 ## M1.3 minimal Blueprint gate
 
